@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>OSINT Bot</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:system-ui,-apple-system,sans-serif;background:#0a0f1e;color:#fff;min-height:100vh;padding-bottom:30px}
+
+.header{background:#0d1526;padding:14px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #1a2a40;position:sticky;top:0;z-index:10}
+.logo{width:36px;height:36px;background:#00d4ff18;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid #00d4ff44;flex-shrink:0}
+.logo svg{width:18px;height:18px}
+.header-text .title{font-size:15px;font-weight:600}
+.header-text .sub{font-size:11px;color:#00d4ff;margin-top:1px}
+
+.search-wrap{padding:14px 16px 0}
+.search-inner{background:#0d1526;border:1px solid #1a2a40;border-radius:12px;display:flex;align-items:center;gap:8px;padding:0 12px}
+.search-inner svg{width:16px;height:16px;color:#3a4a5c;flex-shrink:0}
+.search-inner input{flex:1;background:none;border:none;outline:none;color:#fff;font-size:14px;padding:11px 0}
+.search-inner input::placeholder{color:#3a4a5c}
+
+.tabs{display:flex;margin:12px 16px 0;gap:6px}
+.tab{flex:1;padding:8px 4px;border-radius:8px;border:1px solid #1a2a40;background:#0d1526;color:#6b8aaa;font-size:12px;text-align:center;cursor:pointer;transition:all .2s}
+.tab.active{background:#00d4ff12;border-color:#00d4ff44;color:#00d4ff}
+
+.section{margin-top:16px}
+.sec-title{font-size:11px;color:#6b8aaa;text-transform:uppercase;letter-spacing:1px;padding:0 16px;margin-bottom:8px}
+
+.card{margin:0 16px 8px;background:#0d1526;border:1px solid #1a2a40;border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:background .15s;text-decoration:none}
+.card:active{background:#162030}
+.card-icon{width:38px;height:38px;border-radius:9px;background:#0a0f1e;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;border:1px solid #1a2a40}
+.card-body{flex:1;min-width:0}
+.card-name{font-size:13px;font-weight:500;color:#e0e8f0}
+.card-desc{font-size:11px;color:#6b8aaa;margin-top:2px}
+.card-arrow{color:#2a3a50;font-size:18px;flex-shrink:0}
+
+.time-wrap{padding:0 16px;display:flex;gap:6px;flex-wrap:wrap}
+.time-btn{background:#0d1526;border:1px solid #1a2a40;border-radius:6px;padding:6px 11px;font-size:11px;color:#6b8aaa;cursor:pointer;transition:all .2s}
+.time-btn.active{background:#00d4ff12;border-color:#00d4ff44;color:#00d4ff}
+
+.divider{height:1px;background:#1a2a40;margin:16px}
+
+.modal-bg{display:none;position:fixed;inset:0;background:#00000088;z-index:100;align-items:flex-end}
+.modal-bg.show{display:flex}
+.modal{background:#0d1526;border-radius:18px 18px 0 0;width:100%;padding:20px 16px 32px;border-top:1px solid #1a2a40}
+.modal-title{font-size:15px;font-weight:600;margin-bottom:4px}
+.modal-sub{font-size:12px;color:#6b8aaa;margin-bottom:16px}
+.modal-input{width:100%;background:#0a0f1e;border:1px solid #1a2a40;border-radius:10px;padding:12px;color:#fff;font-size:14px;outline:none;margin-bottom:12px}
+.modal-input:focus{border-color:#00d4ff55}
+.modal-input::placeholder{color:#3a4a5c}
+.modal-btn{width:100%;background:#00d4ff18;border:1px solid #00d4ff44;border-radius:10px;color:#00d4ff;font-size:14px;font-weight:500;padding:13px;cursor:pointer;transition:background .15s}
+.modal-btn:active{background:#00d4ff28}
+.modal-close{float:right;background:none;border:none;color:#6b8aaa;font-size:20px;cursor:pointer;margin-top:-4px}
+
+.result-wrap{margin:0 16px;display:flex;flex-direction:column;gap:8px}
+.result-item{background:#0d1526;border:1px solid #1a2a40;border-radius:10px;padding:11px 13px;display:flex;align-items:center;justify-content:space-between}
+.result-left{display:flex;align-items:center;gap:10px}
+.result-ico{font-size:18px}
+.result-name{font-size:13px;font-weight:500;color:#e0e8f0}
+.result-open{background:#00d4ff12;border:1px solid #00d4ff33;color:#00d4ff;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;text-decoration:none;display:inline-block}
+
+.back-btn{margin:0 16px 12px;background:none;border:1px solid #1a2a40;border-radius:8px;color:#6b8aaa;font-size:13px;padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+
+.hidden{display:none}
+.page{display:none}
+.page.active{display:block}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.5">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+      <circle cx="11" cy="11" r="3"/>
+    </svg>
+  </div>
+  <div class="header-text">
+    <div class="title">OSINT Bot</div>
+    <div class="sub">Razvedka tizimi</div>
+  </div>
+</div>
+
+<!-- BOSH SAHIFA -->
+<div id="page-home" class="page active">
+
+  <div class="search-wrap">
+    <div class="search-inner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input id="main-input" type="text" placeholder="Ism, nick, kalit so'z...">
+    </div>
+  </div>
+
+  <div class="tabs" style="margin-top:12px">
+    <div class="tab active" onclick="switchTab(0)">🌐 Tarmoqlar</div>
+    <div class="tab" onclick="switchTab(1)">🔍 Dorking</div>
+    <div class="tab" onclick="switchTab(2)">📂 Fayllar</div>
+  </div>
+
+  <div class="section">
+    <div class="sec-title">Vaqt filtri</div>
+    <div class="time-wrap">
+      <div class="time-btn active" onclick="setTime(this,'all')">Barchasi</div>
+      <div class="time-btn" onclick="setTime(this,'qdr:d')">24 soat</div>
+      <div class="time-btn" onclick="setTime(this,'qdr:w')">1 hafta</div>
+      <div class="time-btn" onclick="setTime(this,'qdr:m')">1 oy</div>
+      <div class="time-btn" onclick="setTime(this,'qdr:y')">1 yil</div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- TAB 0: TARMOQLAR -->
+  <div id="tab-0">
+    <div class="sec-title">Ijtimoiy tarmoqlar</div>
+    <div class="card" onclick="openSocial()">
+      <div class="card-icon">🗂</div>
+      <div class="card-body">
+        <div class="card-name">Global Matrix Skaner</div>
+        <div class="card-desc">Barcha tarmoqlarda bir vaqtda qidirish</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </div>
+  </div>
+
+  <!-- TAB 1: DORKING -->
+  <div id="tab-1" class="hidden">
+    <div class="sec-title">Google dorking</div>
+    <div class="card" onclick="openDork()">
+      <div class="card-icon">🔍</div>
+      <div class="card-body">
+        <div class="card-name">Advanced Dorking</div>
+        <div class="card-desc">Kengaytirilgan Google qidiruvi</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </div>
+  </div>
+
+  <!-- TAB 2: FAYLLAR -->
+  <div id="tab-2" class="hidden">
+    <div class="sec-title">Hujjat qidirish</div>
+    <div class="card" onclick="openFiles()">
+      <div class="card-icon">📂</div>
+      <div class="card-body">
+        <div class="card-name">PDF / Word / Excel</div>
+        <div class="card-desc">Ochiq faylllarni internetdan topish</div>
+      </div>
+      <div class="card-arrow">›</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- SOCIAL NATIJA SAHIFASI -->
+<div id="page-social" class="page">
+  <div style="padding:14px 0 0">
+    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
+    <div class="sec-title" id="social-title">Natijalar</div>
+    <div class="result-wrap" id="social-results"></div>
+  </div>
+</div>
+
+<!-- DORK NATIJA SAHIFASI -->
+<div id="page-dork" class="page">
+  <div style="padding:14px 0 0">
+    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
+    <div class="sec-title" id="dork-title">Google dorking</div>
+    <div class="result-wrap" id="dork-results"></div>
+  </div>
+</div>
+
+<!-- FILES NATIJA SAHIFASI -->
+<div id="page-files" class="page">
+  <div style="padding:14px 0 0">
+    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
+    <div class="sec-title" id="files-title">Fayl qidiruv</div>
+    <div class="result-wrap" id="files-results"></div>
+  </div>
+</div>
+
+<script>
+try { Telegram.WebApp.ready(); Telegram.WebApp.expand(); } catch(e){}
+
+let currentTime = 'all';
+let currentTab = 0;
+
+function setTime(el, val) {
+  document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  currentTime = val;
+}
+
+function switchTab(n) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', i === n);
+  });
+  for(let i=0;i<3;i++){
+    document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
+  }
+  currentTab = n;
+}
+
+function getQuery() {
+  return document.getElementById('main-input').value.trim();
+}
+
+function buildGoogle(q, time) {
+  let url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
+  if (time !== 'all') url += '&tbs=' + time;
+  return url;
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0,0);
+}
+
+function goHome() { showPage('page-home'); }
+
+function openSocial() {
+  let q = getQuery();
+  if (!q) { alert('Ism yoki nick kiriting!'); return; }
+  let qu = encodeURIComponent(q);
+  let qp = encodeURIComponent(q);
+  let un = q.replace(/\s+/g,'').toLowerCase();
+  let t = currentTime;
+
+  let items = [
+    {ico:'📱', name:'Telegram', url:'https://t.me/'+un},
+    {ico:'📸', name:'Instagram', url:'https://instagram.com/'+un},
+    {ico:'👥', name:'Facebook', url:'https://www.facebook.com/public/'+un},
+    {ico:'🐦', name:'Twitter (X)', url:'https://x.com/'+un},
+    {ico:'🎵', name:'TikTok', url:'https://www.tiktok.com/@'+un},
+    {ico:'👔', name:'LinkedIn', url:'https://www.linkedin.com/search/results/all/?keywords='+qp},
+    {ico:'✈️', name:'TGStat', url:'https://uz.tgstat.com/search?q='+qu},
+    {ico:'📸', name:'Instagram (Google)', url:buildGoogle('site:instagram.com "'+q+'"',t)},
+    {ico:'👥', name:'Facebook (Google)', url:buildGoogle('site:facebook.com "'+q+'"',t)},
+    {ico:'🐦', name:'X jonli postlar', url:'https://x.com/search?q='+qp+'&f=live'},
+    {ico:'🎵', name:'TikTok (Google)', url:buildGoogle('site:tiktok.com "'+q+'"',t)},
+    {ico:'📺', name:'YouTube', url:'https://www.youtube.com/results?search_query='+qp},
+    {ico:'🇷🇺', name:'VKontakte', url:buildGoogle('site:vk.com "'+q+'"',t)},
+    {ico:'👾', name:'Reddit', url:'https://www.reddit.com/search/?q='+qp+'&type=comment'},
+  ];
+
+  document.getElementById('social-title').textContent = '"'+q+'" — tarmoqlar';
+  let html = '';
+  items.forEach(it => {
+    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
+  });
+  document.getElementById('social-results').innerHTML = html;
+  showPage('page-social');
+}
+
+function openDork() {
+  let q = getQuery();
+  if (!q) { alert('Kalit so\'z kiriting!'); return; }
+  let t = currentTime;
+
+  let items = [
+    {ico:'🔍', name:'Asosiy qidiruv', url:buildGoogle(q, t)},
+    {ico:'🌐', name:'Saytlarda eslash', url:buildGoogle('"'+q+'"', t)},
+    {ico:'📰', name:'Yangiliklar', url:buildGoogle(q+' site:news.google.com', t)},
+    {ico:'🗣', name:'Forumlar', url:buildGoogle('"'+q+'" site:forum.* OR site:reddit.com', t)},
+    {ico:'📋', name:'Pasport/ID', url:buildGoogle('"'+q+'" "passport" OR "ID" OR "born"', t)},
+    {ico:'📞', name:'Telefon', url:buildGoogle('"'+q+'" "phone" OR "tel" OR "+998"', t)},
+    {ico:'📧', name:'Email', url:buildGoogle('"'+q+'" "@gmail.com" OR "@mail.ru" OR "@yahoo.com"', t)},
+    {ico:'🏠', name:'Manzil', url:buildGoogle('"'+q+'" "address" OR "manzil" OR "ko\'cha"', t)},
+  ];
+
+  document.getElementById('dork-title').textContent = '"'+q+'" — dorking';
+  let html = '';
+  items.forEach(it => {
+    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
+  });
+  document.getElementById('dork-results').innerHTML = html;
+  showPage('page-dork');
+}
+
+function openFiles() {
+  let q = getQuery();
+  if (!q) { alert('Kalit so\'z kiriting!'); return; }
+  let t = currentTime;
+
+  let items = [
+    {ico:'🟥', name:'PDF hujjatlar', url:buildGoogle('"'+q+'" filetype:pdf', t)},
+    {ico:'🟦', name:'Word hujjatlar', url:buildGoogle('"'+q+'" filetype:doc OR filetype:docx', t)},
+    {ico:'🟩', name:'Excel jadvallar', url:buildGoogle('"'+q+'" filetype:xls OR filetype:xlsx', t)},
+    {ico:'🟨', name:'PowerPoint', url:buildGoogle('"'+q+'" filetype:ppt OR filetype:pptx', t)},
+    {ico:'⬜', name:'Matn fayllari', url:buildGoogle('"'+q+'" filetype:txt', t)},
+    {ico:'🗜', name:'Arxiv fayllar', url:buildGoogle('"'+q+'" filetype:zip OR filetype:rar', t)},
+    {ico:'🖼', name:'Rasmlar', url:'https://www.google.com/search?q='+encodeURIComponent(q)+'&tbm=isch'},
+    {ico:'📁', name:'Barcha fayl turlari', url:buildGoogle('"'+q+'" filetype:pdf OR filetype:doc OR filetype:xls OR filetype:ppt', t)},
+  ];
+
+  document.getElementById('files-title').textContent = '"'+q+'" — fayllar';
+  let html = '';
+  items.forEach(it => {
+    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
+  });
+  document.getElementById('files-results').innerHTML = html;
+  showPage('page-files');
+}
+</script>
+</body>
+</html>
