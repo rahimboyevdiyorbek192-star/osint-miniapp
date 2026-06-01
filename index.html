@@ -2,307 +2,341 @@
 <html lang="uz">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>OSINT Bot</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Kiber Stansiya</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{font-family:system-ui,-apple-system,sans-serif;background:#0a0f1e;color:#fff;min-height:100vh;padding-bottom:30px}
+:root{
+  --bg:var(--tg-theme-bg-color,#fff);
+  --text:var(--tg-theme-text-color,#000);
+  --hint:var(--tg-theme-hint-color,#888);
+  --link:var(--tg-theme-link-color,#2481cc);
+  --btn:var(--tg-theme-button-color,#2481cc);
+  --btnT:var(--tg-theme-button-text-color,#fff);
+  --sec:var(--tg-theme-secondary-bg-color,#f1f1f1);
+  --border:rgba(0,0,0,.1);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:14px}
 
-.header{background:#0d1526;padding:14px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #1a2a40;position:sticky;top:0;z-index:10}
-.logo{width:36px;height:36px;background:#00d4ff18;border-radius:50%;display:flex;align-items:center;justify-content:center;border:1px solid #00d4ff44;flex-shrink:0}
-.logo svg{width:18px;height:18px}
-.header-text .title{font-size:15px;font-weight:600}
-.header-text .sub{font-size:11px;color:#00d4ff;margin-top:1px}
+/* API CONFIG SCREEN */
+#cfg-screen{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;justify-content:center;padding:24px}
+.cfg-title{font-size:22px;font-weight:700;margin-bottom:8px;text-align:center}
+.cfg-sub{font-size:13px;color:var(--hint);text-align:center;margin-bottom:24px;line-height:1.5}
+.cfg-label{font-size:12px;color:var(--hint);margin-bottom:6px}
+.cfg-inp{width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:12px;background:var(--sec);color:var(--text);font-size:14px;outline:none;margin-bottom:12px}
+.cfg-inp:focus{border-color:var(--btn)}
+.cfg-btn{width:100%;padding:14px;border:none;border-radius:12px;background:var(--btn);color:var(--btnT);font-size:16px;font-weight:700;cursor:pointer}
+.cfg-steps{background:var(--sec);border-radius:12px;padding:14px;margin-bottom:20px;font-size:13px;line-height:1.8;color:var(--text)}
+.cfg-steps b{color:var(--btn)}
 
-.search-wrap{padding:14px 16px 0}
-.search-inner{background:#0d1526;border:1px solid #1a2a40;border-radius:12px;display:flex;align-items:center;gap:8px;padding:0 12px}
-.search-inner svg{width:16px;height:16px;color:#3a4a5c;flex-shrink:0}
-.search-inner input{flex:1;background:none;border:none;outline:none;color:#fff;font-size:14px;padding:11px 0}
-.search-inner input::placeholder{color:#3a4a5c}
+/* NAV */
+.nav{display:flex;background:var(--sec);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}
+.nav-btn{flex:1;padding:12px 4px;border:none;background:none;color:var(--hint);font-size:11px;cursor:pointer;border-bottom:2px solid transparent;transition:.2s}
+.nav-btn.active{color:var(--btn);border-bottom-color:var(--btn)}
 
-.tabs{display:flex;margin:12px 16px 0;gap:6px}
-.tab{flex:1;padding:8px 4px;border-radius:8px;border:1px solid #1a2a40;background:#0d1526;color:#6b8aaa;font-size:12px;text-align:center;cursor:pointer;transition:all .2s}
-.tab.active{background:#00d4ff12;border-color:#00d4ff44;color:#00d4ff}
-
-.section{margin-top:16px}
-.sec-title{font-size:11px;color:#6b8aaa;text-transform:uppercase;letter-spacing:1px;padding:0 16px;margin-bottom:8px}
-
-.card{margin:0 16px 8px;background:#0d1526;border:1px solid #1a2a40;border-radius:12px;padding:13px 14px;display:flex;align-items:center;gap:12px;cursor:pointer;transition:background .15s;text-decoration:none}
-.card:active{background:#162030}
-.card-icon{width:38px;height:38px;border-radius:9px;background:#0a0f1e;display:flex;align-items:center;justify-content:center;font-size:19px;flex-shrink:0;border:1px solid #1a2a40}
-.card-body{flex:1;min-width:0}
-.card-name{font-size:13px;font-weight:500;color:#e0e8f0}
-.card-desc{font-size:11px;color:#6b8aaa;margin-top:2px}
-.card-arrow{color:#2a3a50;font-size:18px;flex-shrink:0}
-
-.time-wrap{padding:0 16px;display:flex;gap:6px;flex-wrap:wrap}
-.time-btn{background:#0d1526;border:1px solid #1a2a40;border-radius:6px;padding:6px 11px;font-size:11px;color:#6b8aaa;cursor:pointer;transition:all .2s}
-.time-btn.active{background:#00d4ff12;border-color:#00d4ff44;color:#00d4ff}
-
-.divider{height:1px;background:#1a2a40;margin:16px}
-
-.modal-bg{display:none;position:fixed;inset:0;background:#00000088;z-index:100;align-items:flex-end}
-.modal-bg.show{display:flex}
-.modal{background:#0d1526;border-radius:18px 18px 0 0;width:100%;padding:20px 16px 32px;border-top:1px solid #1a2a40}
-.modal-title{font-size:15px;font-weight:600;margin-bottom:4px}
-.modal-sub{font-size:12px;color:#6b8aaa;margin-bottom:16px}
-.modal-input{width:100%;background:#0a0f1e;border:1px solid #1a2a40;border-radius:10px;padding:12px;color:#fff;font-size:14px;outline:none;margin-bottom:12px}
-.modal-input:focus{border-color:#00d4ff55}
-.modal-input::placeholder{color:#3a4a5c}
-.modal-btn{width:100%;background:#00d4ff18;border:1px solid #00d4ff44;border-radius:10px;color:#00d4ff;font-size:14px;font-weight:500;padding:13px;cursor:pointer;transition:background .15s}
-.modal-btn:active{background:#00d4ff28}
-.modal-close{float:right;background:none;border:none;color:#6b8aaa;font-size:20px;cursor:pointer;margin-top:-4px}
-
-.result-wrap{margin:0 16px;display:flex;flex-direction:column;gap:8px}
-.result-item{background:#0d1526;border:1px solid #1a2a40;border-radius:10px;padding:11px 13px;display:flex;align-items:center;justify-content:space-between}
-.result-left{display:flex;align-items:center;gap:10px}
-.result-ico{font-size:18px}
-.result-name{font-size:13px;font-weight:500;color:#e0e8f0}
-.result-open{background:#00d4ff12;border:1px solid #00d4ff33;color:#00d4ff;border-radius:6px;padding:5px 10px;font-size:11px;cursor:pointer;text-decoration:none;display:inline-block}
-
-.back-btn{margin:0 16px 12px;background:none;border:1px solid #1a2a40;border-radius:8px;color:#6b8aaa;font-size:13px;padding:8px 14px;cursor:pointer;display:flex;align-items:center;gap:6px}
-
-.hidden{display:none}
-.page{display:none}
+.page{display:none;padding:16px;min-height:90vh}
 .page.active{display:block}
+
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+.grid3{grid-template-columns:1fr 1fr 1fr}
+.card{background:var(--sec);border-radius:12px;padding:14px;text-align:center}
+.card-num{font-size:26px;font-weight:700;color:var(--btn)}
+.card-lbl{font-size:11px;color:var(--hint);margin-top:3px}
+
+.status-bar{background:var(--sec);border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.dot-g{background:#4caf50}
+.dot-r{background:#f44336}
+.dot-y{background:#ff9800;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.sec-title{font-size:15px;font-weight:700;margin:14px 0 10px}
+
+.tbl-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--sec);padding:8px 10px;text-align:left;font-weight:600;color:var(--hint);font-size:11px;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:none}
+
+.search{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--sec);color:var(--text);font-size:14px;margin-bottom:10px;outline:none}
+
+.pages{display:flex;justify-content:center;align-items:center;gap:12px;margin-top:14px}
+.pg-btn{padding:7px 14px;border:1px solid var(--border);border-radius:8px;background:var(--sec);color:var(--text);cursor:pointer;font-size:13px}
+.pg-btn:disabled{opacity:.35;cursor:default}
+.pg-info{font-size:12px;color:var(--hint)}
+
+.badge{display:inline-block;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:600}
+.bg{background:#e8f5e9;color:#2e7d32}
+.bb{background:#e3f2fd;color:#1565c0}
+.br{background:#fce4ec;color:#c62828}
+
+.watch-item{background:var(--sec);border-radius:10px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.watch-name{font-weight:600;font-size:13px}
+.watch-sub{font-size:11px;color:var(--hint);margin-top:2px}
+
+.src-item{padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.src-item:last-child{border-bottom:none}
+.src-link{font-size:12px;color:var(--link);word-break:break-all}
+
+.inp-label{font-size:12px;color:var(--hint);margin-bottom:4px}
+.inp{width:100%;padding:10px 14px;border:1px solid var(--border);border-radius:10px;background:var(--sec);color:var(--text);font-size:14px;outline:none;margin-bottom:8px}
+.btn{width:100%;padding:12px;border:none;border-radius:10px;background:var(--btn);color:var(--btnT);font-size:15px;font-weight:600;cursor:pointer;margin-bottom:8px}
+.btn:active{opacity:.8}
+.btn-red{background:#e53935}
+.btn-gray{background:#757575}
+.btn-sm{width:auto;padding:7px 14px;font-size:13px;margin-bottom:0}
+
+.empty{text-align:center;padding:30px;color:var(--hint)}
+.loading{text-align:center;padding:30px;color:var(--hint)}
+.err-box{background:#fce4ec;border-radius:10px;padding:12px;margin-bottom:12px;font-size:13px;color:#c62828}
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="logo">
-    <svg viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.5">
-      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-      <circle cx="11" cy="11" r="3"/>
-    </svg>
+<!-- API URL SOZLASH EKRANI -->
+<div id="cfg-screen">
+  <div class="cfg-title">⚙️ Kiber Stansiya</div>
+  <div class="cfg-sub">Mini App ishga tushirish uchun<br>API server manzilini kiriting</div>
+
+  <div class="cfg-steps">
+    <b>1.</b> Kompyuterda <b>START_BOT.bat</b> yoqing<br>
+    <b>2.</b> <b>NGROK_START.bat</b> yoqing<br>
+    <b>3.</b> <code>https://xxxx.ngrok-free.app</code> linkni nusxa oling<br>
+    <b>4.</b> Pastga joylashtiring
   </div>
-  <div class="header-text">
-    <div class="title">OSINT Bot</div>
-    <div class="sub">Razvedka tizimi</div>
-  </div>
+
+  <div class="cfg-label">API Server URL (ngrok linki)</div>
+  <input class="cfg-inp" id="api-url-inp" placeholder="https://xxxx.ngrok-free.app" type="url">
+  <button class="cfg-btn" onclick="saveApiUrl()">✅ Saqlash va Ochish</button>
 </div>
 
-<!-- BOSH SAHIFA -->
-<div id="page-home" class="page active">
+<!-- ASOSIY INTERFEYS -->
+<div id="main-app" style="display:none">
+  <nav class="nav">
+    <button class="nav-btn active" onclick="nav('dashboard',this)">📊 Dash</button>
+    <button class="nav-btn" onclick="nav('users',this)">👥 Profil</button>
+    <button class="nav-btn" onclick="nav('music',this)">🎵 Musiqa</button>
+    <button class="nav-btn" onclick="nav('scan',this)">⚙️ Boshqaruv</button>
+  </nav>
 
-  <div class="search-wrap">
-    <div class="search-inner">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-      <input id="main-input" type="text" placeholder="Ism, nick, kalit so'z...">
+  <!-- DASHBOARD -->
+  <div id="pg-dashboard" class="page active">
+    <div id="stat-grid" class="grid"><div class="loading">Yuklanmoqda...</div></div>
+    <div class="sec-title">📋 Monitoring manbalar (top 5)</div>
+    <div id="src-preview"></div>
+    <div style="margin-top:16px;text-align:center">
+      <button class="btn btn-sm btn-gray" onclick="resetApiUrl()">🔄 API URL o'zgartirish</button>
     </div>
   </div>
 
-  <div class="tabs" style="margin-top:12px">
-    <div class="tab active" onclick="switchTab(0)">🌐 Tarmoqlar</div>
-    <div class="tab" onclick="switchTab(1)">🔍 Dorking</div>
-    <div class="tab" onclick="switchTab(2)">📂 Fayllar</div>
-  </div>
-
-  <div class="section">
-    <div class="sec-title">Vaqt filtri</div>
-    <div class="time-wrap">
-      <div class="time-btn active" onclick="setTime(this,'all')">Barchasi</div>
-      <div class="time-btn" onclick="setTime(this,'qdr:d')">24 soat</div>
-      <div class="time-btn" onclick="setTime(this,'qdr:w')">1 hafta</div>
-      <div class="time-btn" onclick="setTime(this,'qdr:m')">1 oy</div>
-      <div class="time-btn" onclick="setTime(this,'qdr:y')">1 yil</div>
+  <!-- USERS -->
+  <div id="pg-users" class="page">
+    <input class="search" id="u-search" placeholder="🔍 Ism, username, telefon..." oninput="onSearch()">
+    <div id="u-count" style="font-size:11px;color:var(--hint);margin-bottom:8px"></div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Ism</th><th>Username</th><th>Telefon</th><th>Kanal</th><th>Sana</th></tr></thead>
+        <tbody id="u-tbody"><tr><td colspan="6" class="loading">Yuklanmoqda...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pages">
+      <button class="pg-btn" id="u-prev" onclick="uPage(-1)" disabled>‹</button>
+      <span class="pg-info" id="u-pinfo">1/1</span>
+      <button class="pg-btn" id="u-next" onclick="uPage(1)">›</button>
     </div>
   </div>
 
-  <div class="divider"></div>
-
-  <!-- TAB 0: TARMOQLAR -->
-  <div id="tab-0">
-    <div class="sec-title">Ijtimoiy tarmoqlar</div>
-    <div class="card" onclick="openSocial()">
-      <div class="card-icon">🗂</div>
-      <div class="card-body">
-        <div class="card-name">Global Matrix Skaner</div>
-        <div class="card-desc">Barcha tarmoqlarda bir vaqtda qidirish</div>
-      </div>
-      <div class="card-arrow">›</div>
+  <!-- MUSIC -->
+  <div id="pg-music" class="page">
+    <div id="m-grid" class="grid grid3"></div>
+    <div class="sec-title">👁 Kuzatilayotgan musiqalar</div>
+    <div id="watch-list"></div>
+    <div class="sec-title">🎵 Fingerprint bazasi</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Kanal</th><th>Fayl</th><th>Vaqt</th><th>Sana</th></tr></thead>
+        <tbody id="fp-tbody"><tr><td colspan="5" class="loading">...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pages">
+      <button class="pg-btn" id="fp-prev" onclick="fpPage(-1)" disabled>‹</button>
+      <span class="pg-info" id="fp-pinfo">1/1</span>
+      <button class="pg-btn" id="fp-next" onclick="fpPage(1)">›</button>
     </div>
   </div>
 
-  <!-- TAB 1: DORKING -->
-  <div id="tab-1" class="hidden">
-    <div class="sec-title">Google dorking</div>
-    <div class="card" onclick="openDork()">
-      <div class="card-icon">🔍</div>
-      <div class="card-body">
-        <div class="card-name">Advanced Dorking</div>
-        <div class="card-desc">Kengaytirilgan Google qidiruvi</div>
-      </div>
-      <div class="card-arrow">›</div>
+  <!-- SCAN CONTROL -->
+  <div id="pg-scan" class="page">
+    <div class="status-bar">
+      <div class="dot dot-y" id="s-dot"></div>
+      <span id="s-text">Tekshirilmoqda...</span>
+      <button class="pg-btn" style="margin-left:auto;font-size:11px" onclick="loadScan()">🔄</button>
     </div>
-  </div>
-
-  <!-- TAB 2: FAYLLAR -->
-  <div id="tab-2" class="hidden">
-    <div class="sec-title">Hujjat qidirish</div>
-    <div class="card" onclick="openFiles()">
-      <div class="card-icon">📂</div>
-      <div class="card-body">
-        <div class="card-name">PDF / Word / Excel</div>
-        <div class="card-desc">Ochiq faylllarni internetdan topish</div>
-      </div>
-      <div class="card-arrow">›</div>
+    <div class="sec-title">🔍 Guruh/Kanal skanerlash</div>
+    <div class="inp-label">Guruh linki yoki @username</div>
+    <input class="inp" id="scan-target" placeholder="t.me/guruh yoki @username">
+    <button class="btn" onclick="doScan()">▶️ Skanerlashni Boshlash</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-red" style="flex:1" onclick="doPause()">⏸ To'xtatish</button>
+      <button class="btn btn-gray" style="flex:1" onclick="doResume()">▶️ Davom</button>
     </div>
-  </div>
-
-</div>
-
-<!-- SOCIAL NATIJA SAHIFASI -->
-<div id="page-social" class="page">
-  <div style="padding:14px 0 0">
-    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
-    <div class="sec-title" id="social-title">Natijalar</div>
-    <div class="result-wrap" id="social-results"></div>
-  </div>
-</div>
-
-<!-- DORK NATIJA SAHIFASI -->
-<div id="page-dork" class="page">
-  <div style="padding:14px 0 0">
-    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
-    <div class="sec-title" id="dork-title">Google dorking</div>
-    <div class="result-wrap" id="dork-results"></div>
-  </div>
-</div>
-
-<!-- FILES NATIJA SAHIFASI -->
-<div id="page-files" class="page">
-  <div style="padding:14px 0 0">
-    <button class="back-btn" onclick="goHome()">&#8592; Orqaga</button>
-    <div class="sec-title" id="files-title">Fayl qidiruv</div>
-    <div class="result-wrap" id="files-results"></div>
+    <div class="sec-title">📋 Barcha manbalar</div>
+    <div id="all-src"></div>
   </div>
 </div>
 
 <script>
-try { Telegram.WebApp.ready(); Telegram.WebApp.expand(); } catch(e){}
+const tg=window.Telegram?.WebApp;
+if(tg){tg.ready();tg.expand();}
 
-let currentTime = 'all';
-let currentTab = 0;
+let API_URL=localStorage.getItem('kiber_api_url')||'';
+let uCur=1,uPages=1,fpCur=1,fpPages=1,sTimer=null;
 
-function setTime(el, val) {
-  document.querySelectorAll('.time-btn').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  currentTime = val;
+// ── API URL SOZLASH ─────────────────────────────────────
+if(API_URL){
+  document.getElementById('cfg-screen').style.display='none';
+  document.getElementById('main-app').style.display='block';
+  document.getElementById('api-url-inp').value=API_URL;
+  loadDash();
 }
 
-function switchTab(n) {
-  document.querySelectorAll('.tab').forEach((t,i) => {
-    t.classList.toggle('active', i === n);
-  });
-  for(let i=0;i<3;i++){
-    document.getElementById('tab-'+i).classList.toggle('hidden', i !== n);
+function saveApiUrl(){
+  let url=document.getElementById('api-url-inp').value.trim().replace(/\/+$/,'');
+  if(!url.startsWith('http')){alert('To\'g\'ri URL kiriting (https://...)');return;}
+  localStorage.setItem('kiber_api_url',url);
+  API_URL=url;
+  document.getElementById('cfg-screen').style.display='none';
+  document.getElementById('main-app').style.display='block';
+  loadDash();
+}
+
+function resetApiUrl(){
+  localStorage.removeItem('kiber_api_url');
+  API_URL='';
+  document.getElementById('main-app').style.display='none';
+  document.getElementById('cfg-screen').style.display='flex';
+}
+
+// ── API ─────────────────────────────────────────────────
+async function api(path,opt){
+  try{
+    const r=await fetch(API_URL+path,{
+      ...opt,
+      headers:{'Content-Type':'application/json','ngrok-skip-browser-warning':'1',...(opt?.headers||{})}
+    });
+    return await r.json();
+  }catch(e){
+    return {error:e.message};
   }
-  currentTab = n;
 }
 
-function getQuery() {
-  return document.getElementById('main-input').value.trim();
+function nav(name,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('pg-'+name).classList.add('active');
+  btn.classList.add('active');
+  if(name==='dashboard')loadDash();
+  else if(name==='users'){uCur=1;loadUsers();}
+  else if(name==='music'){fpCur=1;loadMusic();}
+  else if(name==='scan')loadScan();
 }
 
-function buildGoogle(q, time) {
-  let url = 'https://www.google.com/search?q=' + encodeURIComponent(q);
-  if (time !== 'all') url += '&tbs=' + time;
-  return url;
+// ── DASHBOARD ───────────────────────────────────────────
+async function loadDash(){
+  const[st,src]=await Promise.all([api('/api/stats'),api('/api/sources')]);
+  if(st.error){
+    document.getElementById('stat-grid').innerHTML=`<div class="err-box" style="grid-column:1/-1">❌ Server bilan bog'lanib bo'lmadi.<br>ngrok ishlayotganini tekshiring yoki API URL ni yangilang.</div>`;
+    return;
+  }
+  document.getElementById('stat-grid').innerHTML=`
+    <div class="card"><div class="card-num">${f(st.users)}</div><div class="card-lbl">👥 Foydalanuvchilar</div></div>
+    <div class="card"><div class="card-num">${f(st.groups)}</div><div class="card-lbl">📢 Manbalar</div></div>
+    <div class="card"><div class="card-num">${f(st.fingerprints)}</div><div class="card-lbl">🎵 Fingerprintlar</div></div>
+    <div class="card"><div class="card-num">${f(st.with_channels)}</div><div class="card-lbl">🔗 Kanalli profillar</div></div>
+    <div class="card"><div class="card-num">${f(st.hidden_pending)}</div><div class="card-lbl">⏳ Kutilayotgan maxfiy</div></div>
+    <div class="card"><div class="card-num">${f(st.hidden_joined)}</div><div class="card-lbl">🔓 Kirilgan maxfiy</div></div>
+  `;
+  const top=(src.sources||[]).slice(0,5);
+  document.getElementById('src-preview').innerHTML=top.length
+    ?top.map(s=>`<div class="src-item"><span class="src-link">${s.link}</span><span class="badge ${s.type==='group'?'bb':'bg'}">${s.type==='group'?s.users+' ta':s.type}</span></div>`).join('')
+    :'<div class="empty">Manbalar yo\'q</div>';
 }
 
-function showPage(id) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById(id).classList.add('active');
-  window.scrollTo(0,0);
+// ── USERS ───────────────────────────────────────────────
+async function loadUsers(q=''){
+  document.getElementById('u-tbody').innerHTML='<tr><td colspan="6" class="loading">...</td></tr>';
+  const d=await api(`/api/users?q=${encodeURIComponent(q)}&page=${uCur}&limit=50`);
+  uPages=d.pages||1;
+  document.getElementById('u-count').textContent=`Jami: ${f(d.total||0)} ta`;
+  document.getElementById('u-pinfo').textContent=`${uCur}/${uPages}`;
+  document.getElementById('u-prev').disabled=uCur<=1;
+  document.getElementById('u-next').disabled=uCur>=uPages;
+  document.getElementById('u-tbody').innerHTML=(d.users||[]).map((u,i)=>`
+    <tr>
+      <td style="color:var(--hint)">${(uCur-1)*50+i+1}</td>
+      <td><b>${u.name||'—'}</b></td>
+      <td style="color:var(--link)">${u.username||'—'}</td>
+      <td>${u.phone||'—'}</td>
+      <td>${u.open_channels||u.has_hidden?'<span class="badge bg">✓</span>':''}</td>
+      <td style="color:var(--hint)">${(u.updated||'').slice(0,10)}</td>
+    </tr>`).join('')||'<tr><td colspan="6" class="empty">Topilmadi</td></tr>';
 }
-
-function goHome() { showPage('page-home'); }
-
-function openSocial() {
-  let q = getQuery();
-  if (!q) { alert('Ism yoki nick kiriting!'); return; }
-  let qu = encodeURIComponent(q);
-  let qp = encodeURIComponent(q);
-  let un = q.replace(/\s+/g,'').toLowerCase();
-  let t = currentTime;
-
-  let items = [
-    {ico:'📱', name:'Telegram', url:'https://t.me/'+un},
-    {ico:'📸', name:'Instagram', url:'https://instagram.com/'+un},
-    {ico:'👥', name:'Facebook', url:'https://www.facebook.com/public/'+un},
-    {ico:'🐦', name:'Twitter (X)', url:'https://x.com/'+un},
-    {ico:'🎵', name:'TikTok', url:'https://www.tiktok.com/@'+un},
-    {ico:'👔', name:'LinkedIn', url:'https://www.linkedin.com/search/results/all/?keywords='+qp},
-    {ico:'✈️', name:'TGStat', url:'https://uz.tgstat.com/search?q='+qu},
-    {ico:'📸', name:'Instagram (Google)', url:buildGoogle('site:instagram.com "'+q+'"',t)},
-    {ico:'👥', name:'Facebook (Google)', url:buildGoogle('site:facebook.com "'+q+'"',t)},
-    {ico:'🐦', name:'X jonli postlar', url:'https://x.com/search?q='+qp+'&f=live'},
-    {ico:'🎵', name:'TikTok (Google)', url:buildGoogle('site:tiktok.com "'+q+'"',t)},
-    {ico:'📺', name:'YouTube', url:'https://www.youtube.com/results?search_query='+qp},
-    {ico:'🇷🇺', name:'VKontakte', url:buildGoogle('site:vk.com "'+q+'"',t)},
-    {ico:'👾', name:'Reddit', url:'https://www.reddit.com/search/?q='+qp+'&type=comment'},
-  ];
-
-  document.getElementById('social-title').textContent = '"'+q+'" — tarmoqlar';
-  let html = '';
-  items.forEach(it => {
-    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
-  });
-  document.getElementById('social-results').innerHTML = html;
-  showPage('page-social');
+function onSearch(){
+  clearTimeout(sTimer);
+  sTimer=setTimeout(()=>{uCur=1;loadUsers(document.getElementById('u-search').value);},400);
 }
+function uPage(d){uCur=Math.max(1,Math.min(uPages,uCur+d));loadUsers(document.getElementById('u-search').value);}
 
-function openDork() {
-  let q = getQuery();
-  if (!q) { alert('Kalit so\'z kiriting!'); return; }
-  let t = currentTime;
-
-  let items = [
-    {ico:'🔍', name:'Asosiy qidiruv', url:buildGoogle(q, t)},
-    {ico:'🌐', name:'Saytlarda eslash', url:buildGoogle('"'+q+'"', t)},
-    {ico:'📰', name:'Yangiliklar', url:buildGoogle(q+' site:news.google.com', t)},
-    {ico:'🗣', name:'Forumlar', url:buildGoogle('"'+q+'" site:forum.* OR site:reddit.com', t)},
-    {ico:'📋', name:'Pasport/ID', url:buildGoogle('"'+q+'" "passport" OR "ID" OR "born"', t)},
-    {ico:'📞', name:'Telefon', url:buildGoogle('"'+q+'" "phone" OR "tel" OR "+998"', t)},
-    {ico:'📧', name:'Email', url:buildGoogle('"'+q+'" "@gmail.com" OR "@mail.ru" OR "@yahoo.com"', t)},
-    {ico:'🏠', name:'Manzil', url:buildGoogle('"'+q+'" "address" OR "manzil" OR "ko\'cha"', t)},
-  ];
-
-  document.getElementById('dork-title').textContent = '"'+q+'" — dorking';
-  let html = '';
-  items.forEach(it => {
-    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
-  });
-  document.getElementById('dork-results').innerHTML = html;
-  showPage('page-dork');
+// ── MUSIC ───────────────────────────────────────────────
+async function loadMusic(){
+  const[d,st]=await Promise.all([api(`/api/music?page=${fpCur}&limit=50`),api('/api/stats')]);
+  fpPages=d.pages||1;
+  document.getElementById('m-grid').innerHTML=`
+    <div class="card"><div class="card-num">${f(d.total||0)}</div><div class="card-lbl">🎵 Fingerprintlar</div></div>
+    <div class="card"><div class="card-num">${(d.watches||[]).length}</div><div class="card-lbl">👁 Kuzatilayotgan</div></div>
+    <div class="card"><div class="card-num">${f(st.music_channels||0)}</div><div class="card-lbl">📢 Kanallar</div></div>
+  `;
+  document.getElementById('fp-pinfo').textContent=`${fpCur}/${fpPages}`;
+  document.getElementById('fp-prev').disabled=fpCur<=1;
+  document.getElementById('fp-next').disabled=fpCur>=fpPages;
+  document.getElementById('watch-list').innerHTML=(d.watches||[]).length
+    ?(d.watches||[]).map(w=>`<div class="watch-item"><div><div class="watch-name">🎵 ${w.name}</div><div class="watch-sub">${w.duration}s · ${(w.added||'').slice(0,10)}</div></div><span class="badge bb">Kuzatilmoqda</span></div>`).join('')
+    :'<div class="empty">Hali qo\'shilmagan</div>';
+  document.getElementById('fp-tbody').innerHTML=(d.fingerprints||[]).map((fp,i)=>`
+    <tr>
+      <td style="color:var(--hint)">${(fpCur-1)*50+i+1}</td>
+      <td>${fp.ch_name}</td>
+      <td style="color:var(--hint)">${fp.fname}</td>
+      <td>${fp.dur}s</td>
+      <td style="color:var(--hint)">${(fp.added||'').slice(0,10)}</td>
+    </tr>`).join('')||'<tr><td colspan="5" class="empty">Bo\'sh</td></tr>';
 }
+function fpPage(d){fpCur=Math.max(1,Math.min(fpPages,fpCur+d));loadMusic();}
 
-function openFiles() {
-  let q = getQuery();
-  if (!q) { alert('Kalit so\'z kiriting!'); return; }
-  let t = currentTime;
-
-  let items = [
-    {ico:'🟥', name:'PDF hujjatlar', url:buildGoogle('"'+q+'" filetype:pdf', t)},
-    {ico:'🟦', name:'Word hujjatlar', url:buildGoogle('"'+q+'" filetype:doc OR filetype:docx', t)},
-    {ico:'🟩', name:'Excel jadvallar', url:buildGoogle('"'+q+'" filetype:xls OR filetype:xlsx', t)},
-    {ico:'🟨', name:'PowerPoint', url:buildGoogle('"'+q+'" filetype:ppt OR filetype:pptx', t)},
-    {ico:'⬜', name:'Matn fayllari', url:buildGoogle('"'+q+'" filetype:txt', t)},
-    {ico:'🗜', name:'Arxiv fayllar', url:buildGoogle('"'+q+'" filetype:zip OR filetype:rar', t)},
-    {ico:'🖼', name:'Rasmlar', url:'https://www.google.com/search?q='+encodeURIComponent(q)+'&tbm=isch'},
-    {ico:'📁', name:'Barcha fayl turlari', url:buildGoogle('"'+q+'" filetype:pdf OR filetype:doc OR filetype:xls OR filetype:ppt', t)},
-  ];
-
-  document.getElementById('files-title').textContent = '"'+q+'" — fayllar';
-  let html = '';
-  items.forEach(it => {
-    html += '<div class="result-item"><div class="result-left"><span class="result-ico">'+it.ico+'</span><span class="result-name">'+it.name+'</span></div><a class="result-open" href="'+it.url+'" target="_blank">Ochish</a></div>';
-  });
-  document.getElementById('files-results').innerHTML = html;
-  showPage('page-files');
+// ── SCAN CONTROL ────────────────────────────────────────
+async function loadScan(){
+  const[st,src]=await Promise.all([api('/api/scan/status'),api('/api/sources')]);
+  const dot=document.getElementById('s-dot');
+  dot.className='dot '+(st.scan_count>0?'dot-y':st.monitoring_paused?'dot-r':'dot-g');
+  document.getElementById('s-text').textContent=
+    st.scan_count>0?`⚡ Skanerlash (${st.scan_count} ta)`:st.monitoring_paused?'⏸ To\'xtatilgan':'✅ Faol';
+  document.getElementById('all-src').innerHTML=(src.sources||[]).length
+    ?(src.sources||[]).map(s=>`<div class="src-item"><span class="src-link">${s.link}</span><span class="badge ${s.type==='group'?'bb':s.type.includes('joined')?'bg':'br'}">${s.type==='group'?s.users+' ta':s.type}</span></div>`).join('')
+    :'<div class="empty">Manbalar yo\'q</div>';
 }
+async function doScan(){
+  const t=document.getElementById('scan-target').value.trim();
+  if(!t){alert('Guruh linkini kiriting!');return;}
+  const r=await api('/api/scan/start',{method:'POST',body:JSON.stringify({target:t})});
+  if(r.ok){document.getElementById('scan-target').value='';alert('✅ Yuborildi!');}
+  else alert('❌ Xatolik: '+r.detail);
+}
+async function doPause(){await api('/api/monitoring/pause',{method:'POST'});setTimeout(loadScan,500);}
+async function doResume(){await api('/api/monitoring/resume',{method:'POST'});setTimeout(loadScan,500);}
+
+function f(n){return(n||0).toLocaleString();}
+setInterval(()=>{if(document.getElementById('pg-scan').classList.contains('active'))loadScan();},30000);
 </script>
 </body>
 </html>
