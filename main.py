@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 import database as db_mod
 import tg_scrapers as engine
 import music_scanner as music
+import phishing_checker as phish_mod
 
 load_dotenv()
 
@@ -108,7 +109,8 @@ MAIN_KEYBOARD = [
     [Button.text("📁 Arxiv / Savatcha"),         Button.text("🔒 Maxfiy Kanal Qo'shish")],
     [Button.text("👥 Adminlar Ro'yxati"),     Button.text("📋 Manbalar Ro'yxati")],
     [Button.text("🎼 Ko'p Musiqa Qidirish"),  Button.text("🔔 Kuzatiladigan Musiqalar")],
-    [Button.text("💬 Kamentariya Xisoboti"),  Button.text("🔄 Botni Qayta Yuklash")]
+    [Button.text("🛡 Havola Tekshirish"),      Button.text("💬 Kamentariya Xisoboti")],
+    [Button.text("🔄 Botni Qayta Yuklash")]
 ]
 
 USER_STATES = {}
@@ -120,7 +122,7 @@ BUTTON_TEXTS = {
     "📁 Arxiv / Savatcha", "🔒 Maxfiy Kanal Qo'shish",
     "👥 Adminlar Ro'yxati", "📋 Manbalar Ro'yxati",
     "🎼 Ko'p Musiqa Qidirish", "🔔 Kuzatiladigan Musiqalar",
-
+    "🛡 Havola Tekshirish",
     "💬 Kamentariya Xisoboti",
     "🔄 Botni Qayta Yuklash",
 }
@@ -709,8 +711,19 @@ async def keyword_date_callback(event):
 async def global_input_processor(event):
     if not await is_admin(event.sender_id):
         return
-    if event.text and (event.text.strip() in BUTTON_TEXTS or event.text.startswith('/')):
+    txt = (event.text or "").strip()
+    if txt and (txt in BUTTON_TEXTS or txt.startswith('/')):
         return
+
+    # ── 🛡 Havola tekshirish rejimi ──────────────────────────────────
+    if event.sender_id in _PHISHING_WAIT:
+        if txt == "❌ Bekor Qilish":
+            _PHISHING_WAIT.discard(event.sender_id)
+            await event.respond("❌ Bekor qilindi.", buttons=MAIN_KEYBOARD)
+            return
+        asyncio.create_task(_run_phishing_check(event.sender_id, event.message))
+        return
+
     state = USER_STATES.get(event.sender_id)
     if not state:
         return
@@ -1957,6 +1970,103 @@ async def check_knocker(event):
         lines.append(f"  `{ch_id[:30]}` — {elapsed}")
 
     await event.respond("\n".join(lines))
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 🛡 HAVOLA TEKSHIRISH — Phishing/Scam aniqlovchi
+# ─────────────────────────────────────────────────────────────────────
+
+_PHISHING_WAIT = set()   # havola kutilayotgan foydalanuvchilar
+
+@bot.on(events.NewMessage(pattern="🛡 Havola Tekshirish"))
+async def btn_phishing(event):
+    if not await is_admin(event.sender_id):
+        return
+    _PHISHING_WAIT.add(event.sender_id)
+    await event.respond(
+        "🛡 **Fishing / Scam Havola Tekshiruvi**\n\n"
+        "Shubhali havola yoki xabarni yuboring (forward ham qabul qilinadi).\n\n"
+        "**Nima tekshiriladi:**\n"
+        "🦠 VirusTotal — 70+ antivirus bazasi\n"
+        "☣️ URLhaus — malware/phishing bazasi\n"
+        "🚨 AbuseIPDB — spam IP bazasi\n"
+        "🛡 SSL sertifikat holati\n"
+        "📅 Domen yoshi (WHOIS)\n"
+        "🔗 Yo'naltirish zanjiri\n"
+        "🔤 Homograf hujum aniqlash\n"
+        "🇺🇿 O'zbek brendlari taqlidi (Payme, Click, Humo...)\n"
+        "📱 Telegram kanal/bot tahlili\n\n"
+        "📊 Natija: 0–100 ballik xavf tizimi",
+        buttons=[[Button.text("❌ Bekor Qilish")]]
+    )
+
+async def _run_phishing_check(sender_id, message):
+    """Fon task: URL larni tahlil qilib natijani yuboradi."""
+    try:
+        urls = phish_mod.extract_urls_from_telethon_msg(message)
+        context_w = phish_mod.check_message_context_telethon(message)
+
+        if not urls and context_w:
+            await bot.send_message(sender_id,
+                "🚨 **Kiberxavfsizlik ogohlantirishlari:**\n\n"
+                "Xabarda havola topilmadi, lekin shubhali belgilar aniqlandi:\n\n"
+                + "\n".join(context_w)
+                + "\n\n⚠️ _Bu xabarga ishonmang!_"
+            )
+            return
+
+        if not urls:
+            await bot.send_message(sender_id,
+                "⚠️ Xabarda hech qanday havola topilmadi.\n"
+                "Havola yoki shubhali xabarni yuboring."
+            )
+            return
+
+        await bot.send_message(sender_id,
+            f"⏳ **{len(urls)} ta havola tahlil qilinmoqda...**\n"
+            f"_(VirusTotal, URLhaus, SSL, WHOIS parallel tekshirilmoqda)_"
+        )
+
+        for url in list(urls)[:5]:
+            report, score, probe_urls = await phish_mod.analyze_url(
+                url, userbot=userbot, bot_client=userbot, context_w=context_w
+            )
+            if report:
+                phish_mod.save_stat(url, score)
+                text_out = (
+                    "🚨 **Kiberxavfsizlik tahlil hisoboti:**\n\n"
+                    + report
+                    + "\n\n" + "—" * 20 + "\n"
+                    "⚠️ _Xavf darajasi 50+ bo'lsa karta yoki parol kiritmang!_"
+                )
+                try:
+                    await bot.send_message(sender_id, text_out, parse_mode='md')
+                except Exception:
+                    await bot.send_message(sender_id, text_out)
+
+            if probe_urls:
+                await bot.send_message(sender_id,
+                    f"🤖 **Userbot {len(probe_urls)} ta yashirin havola topdi — tahlil boshlanmoqda...**"
+                )
+                for probe_url in probe_urls[:3]:
+                    if probe_url in urls:
+                        continue
+                    p_report, p_score, _ = await phish_mod.analyze_url(probe_url, userbot=userbot)
+                    if p_report:
+                        phish_mod.save_stat(probe_url, p_score)
+                        p_out = ("🤖 **Userbot topgan havola tahlili:**\n\n" + p_report
+                                 + "\n\n⚠️ _Bot tugmasidagi havola — ayniqsa ehtiyot bo'ling!_")
+                        try:
+                            await bot.send_message(sender_id, p_out, parse_mode='md')
+                        except Exception:
+                            await bot.send_message(sender_id, p_out)
+    except Exception as e:
+        await bot.send_message(sender_id, f"❌ Tahlil xatosi: {e}")
+    finally:
+        await bot.send_message(sender_id, "✅ Tahlil yakunlandi.",
+                               buttons=Button.clear())
+        _PHISHING_WAIT.discard(sender_id)
+        await bot.send_message(sender_id, "Asosiy menyu:", buttons=MAIN_KEYBOARD)
 
 
 @bot.on(events.NewMessage(pattern="🔄 Botni Qayta Yuklash"))
@@ -3373,6 +3483,7 @@ async def main():
 
     await db_mod.init_db()
     await music.init_music_db()
+    phish_mod.init_db()
     await userbot.start()
     await bot.start(bot_token=BOT_TOKEN)
 
