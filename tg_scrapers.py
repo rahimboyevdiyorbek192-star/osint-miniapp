@@ -450,12 +450,20 @@ def apply_excel_styles_light(ws):
 
 async def deep_scan_group(userbot, target_group, output_path, status_msg,
                            resume_offset=0, resume_count=0, scan_id=None,
-                           pre_entity=None):
+                           pre_entity=None, extra_userbots=None):
     """
     Guruh a'zolarini skanerlab Excel ga yozadi.
     Bio dagi t.me/+XXXX linklar — alohida "Maxfiy Kanal" ustuniga.
     Maxfiy kanallarga so'rovnoma yuboriladi va DB ga saqlanadi.
+    extra_userbots: qo'shimcha userbot ro'yxati — GetFullUserRequest tezligi 2x+
     """
+    # Userbot pool — GetFullUserRequest round-robin uchun
+    _ub_pool = [userbot]
+    if extra_userbots:
+        _ub_pool += [u for u in extra_userbots if u is not None]
+    _ub_count = len(_ub_pool)
+    _ub_idx = 0  # round-robin hisoblagich
+
     global MONITORING_PAUSED, _SCAN_COUNT, _FLOOD_PENALTY
     _SCAN_COUNT += 1
     MONITORING_PAUSED = True
@@ -575,9 +583,11 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                             _maxfiy  = ""
                             _ochiq   = ""
                             try:
-                                await asyncio.sleep(0.7)
+                                await asyncio.sleep(0.5)
+                                _ub2 = _ub_pool[_ub_idx % _ub_count]
+                                _ub_idx += 1
                                 fi = await asyncio.wait_for(
-                                    userbot(GetFullUserRequest(sender.id)), timeout=20
+                                    _ub2(GetFullUserRequest(sender.id)), timeout=20
                                 )
                                 fu   = fi.full_user
                                 _bio = fu.about or ""
@@ -712,9 +722,11 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
             ochiq = ""
 
             try:
-                await asyncio.sleep(0.7)   # flood oldini olish — 30 tez+20s to'xtash o'rniga silliq
+                await asyncio.sleep(0.5)   # flood oldini olish — 2 userbot = har biri 1.0s/call
+                _ub3 = _ub_pool[_ub_idx % _ub_count]
+                _ub_idx += 1
                 fi = await asyncio.wait_for(
-                    userbot(GetFullUserRequest(uid)), timeout=20
+                    _ub3(GetFullUserRequest(uid)), timeout=20
                 )
                 fu  = fi.full_user
                 bio = fu.about or ""

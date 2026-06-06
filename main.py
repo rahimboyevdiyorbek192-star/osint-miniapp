@@ -90,6 +90,17 @@ def _save_excel_ids(tc_ids: set, all_ids: set):
 userbot = TelegramClient(os.path.join(BASE_DIR, 'userbot_session'), API_ID, API_HASH)
 bot     = TelegramClient(os.path.join(BASE_DIR, 'bot_session'),     API_ID, API_HASH)
 
+# Ikkinchi userbot (ixtiyoriy) — .env da USERBOT2_PHONE bo'lsa ishga tushadi
+_USERBOT2_PHONE = os.getenv("USERBOT2_PHONE", "").strip()
+_USERBOT2_API_ID   = int(os.getenv("USERBOT2_API_ID",   str(os.getenv("API_ID", "0"))).strip() or "0") or int(os.getenv("API_ID"))
+_USERBOT2_API_HASH = os.getenv("USERBOT2_API_HASH", "").strip() or os.getenv("API_HASH", "").strip()
+userbot2 = (
+    TelegramClient(os.path.join(BASE_DIR, 'userbot2_session'), _USERBOT2_API_ID, _USERBOT2_API_HASH)
+    if _USERBOT2_PHONE else None
+)
+# extra_userbots: deep_scan_group ga beriladi, bo'sh ro'yxat = 1 userbot rejim
+_EXTRA_USERBOTS = [userbot2] if userbot2 else []
+
 MAIN_KEYBOARD = [
     [Button.text("🔍 Skanerlash")],
     [Button.text("🔎 Kalit So'z Qidiruv")],
@@ -1116,7 +1127,8 @@ async def run_background_scan(sender_id, target, fpath, status_msg, pre_entity=N
     global _last_scan_end_time
     try:
         count = await engine.deep_scan_group(
-            userbot, target, fpath, status_msg, pre_entity=pre_entity
+            userbot, target, fpath, status_msg, pre_entity=pre_entity,
+            extra_userbots=_EXTRA_USERBOTS
         )
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
             await db.execute(
@@ -3363,6 +3375,14 @@ async def main():
     await music.init_music_db()
     await userbot.start()
     await bot.start(bot_token=BOT_TOKEN)
+
+    # Ikkinchi userbot — agar .env da USERBOT2_PHONE yozilgan bo'lsa
+    if userbot2 is not None:
+        try:
+            await userbot2.start(phone=_USERBOT2_PHONE)
+            print(f"✅ Userbot2 ishga tushdi ({_USERBOT2_PHONE})")
+        except Exception as e:
+            print(f"[OGOHLANTIRISH] Userbot2 ishga tushmadi: {e} — faqat 1 userbot bilan davom etilmoqda")
 
     # Elektr uzilishi qolgan vaqtinchalik fayllarni tozalash
     import glob as _glob
