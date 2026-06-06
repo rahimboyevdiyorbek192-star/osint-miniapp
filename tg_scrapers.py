@@ -600,7 +600,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                                 _ochiq = ", ".join(oc) if oc else ""
                                 pc  = getattr(fu, 'personal_channel_id', None)
                                 if pc:
-                                    _shaxsiy = f"tg://resolve?domain=c{pc}"
+                                    _shaxsiy = f"https://t.me/c/{pc}/1"
                                 if inv:
                                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db:
                                         for lnk in inv:
@@ -739,7 +739,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                 ochiq = ", ".join(oc) if oc else ""
                 pc = getattr(fu, 'personal_channel_id', None)
                 if pc:
-                    shaxsiy = f"tg://resolve?domain=c{pc}"
+                    shaxsiy = f"https://t.me/c/{pc}/1"
                 if inv:
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db:
                         for lnk in inv:
@@ -1496,7 +1496,7 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                         await db.commit()
                 ch_id = getattr(fi.full_user, 'personal_channel_id', None)
                 if ch_id:
-                    shaxsiy = f"tg://resolve?domain=c{ch_id}"
+                    shaxsiy = f"https://t.me/c/{ch_id}/1"
             except FloodWaitError as e:
                 _record_flood(e.seconds)
                 log_flood("scan_messages_user", e.seconds)
@@ -1708,7 +1708,7 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                             await db.commit()
                     ch_id = getattr(fi.full_user, 'personal_channel_id', None)
                     if ch_id:
-                        shaxsiy = f"tg://resolve?domain=c{ch_id}"
+                        shaxsiy = f"https://t.me/c/{ch_id}/1"
                 except FloodWaitError as e:
                     _record_flood(e.seconds)
                     log_flood("scan_channel_comments", e.seconds)
