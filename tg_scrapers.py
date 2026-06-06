@@ -266,6 +266,23 @@ def extract_invite_links(bio_text):
 async def safe_get_entity(userbot, target):
     """get_entity ni FloodWait bilan xavfsiz chaqirish."""
     from telethon.errors import FloodWaitError
+
+    # tg://resolve?domain=cXXXXX → kanal ID ga aylantirish
+    if isinstance(target, str):
+        if 'tg://resolve' in target and 'domain=c' in target:
+            try:
+                cid = int(target.split('domain=c')[-1].split('&')[0].strip())
+                target = int(f"-100{cid}")
+            except Exception:
+                pass
+        # https://t.me/c/XXXX/YYY → kanal ID
+        elif 't.me/c/' in target:
+            try:
+                cid = int(target.split('t.me/c/')[1].split('/')[0])
+                target = int(f"-100{cid}")
+            except Exception:
+                pass
+
     for attempt in range(3):
         try:
             return await userbot.get_entity(target)
