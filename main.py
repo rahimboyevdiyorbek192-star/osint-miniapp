@@ -1984,25 +1984,83 @@ async def btn_phishing(event):
         return
     _PHISHING_WAIT.add(event.sender_id)
     await event.respond(
-        "🛡 **Fishing / Scam Havola Tekshiruvi**\n\n"
-        "Shubhali havola yoki xabarni yuboring (forward ham qabul qilinadi).\n\n"
-        "**Nima tekshiriladi:**\n"
+        "🛡 **Kiberxavfsizlik Tekshiruvi**\n\n"
+        "Quyidagilardan birini yuboring:\n"
+        "🔗 Shubhali havola yoki xabar (forward)\n"
+        "📱 APK fayl — ruxsatlar, yashirin serverlar\n"
+        "🎵 OGG fayl — niqoblangan fayl yoki yashirin ma'lumot\n\n"
+        "**Havola tekshiruvi:**\n"
         "🦠 VirusTotal — 70+ antivirus bazasi\n"
         "☣️ URLhaus — malware/phishing bazasi\n"
-        "🚨 AbuseIPDB — spam IP bazasi\n"
-        "🛡 SSL sertifikat holati\n"
-        "📅 Domen yoshi (WHOIS)\n"
-        "🔗 Yo'naltirish zanjiri\n"
-        "🔤 Homograf hujum aniqlash\n"
+        "🛡 SSL, WHOIS, yo'naltirish zanjiri\n"
         "🇺🇿 O'zbek brendlari taqlidi (Payme, Click, Humo...)\n"
         "📱 Telegram kanal/bot tahlili\n\n"
+        "**APK tekshiruvi:**\n"
+        "🔐 Xavfli ruxsatlar (SMS, mikrofon, kamera...)\n"
+        "🌐 Ma'lumot uzatiladigan serverlar aniqlash\n"
+        "🤖 Telegram bot API ga ma'lumot oqishi\n\n"
+        "**OGG tekshiruvi:**\n"
+        "🎭 Niqoblangan fayl aniqlash (EXE, APK...)\n"
+        "🏷 Yashirin metadata tekshiruvi\n\n"
         "📊 Natija: 0–100 ballik xavf tizimi",
         buttons=[[Button.text("❌ Bekor Qilish")]]
     )
 
 async def _run_phishing_check(sender_id, message):
-    """Fon task: URL larni tahlil qilib natijani yuboradi."""
+    """Fon task: URL / APK / OGG fayllarni tahlil qilib natijani yuboradi."""
     try:
+        # ── APK yoki OGG fayl yuborilganmi tekshirish ────────────────
+        doc = getattr(message, 'document', None) or getattr(message, 'file', None)
+        media = getattr(message, 'media', None)
+        if media and hasattr(media, 'document'):
+            doc = media.document
+
+        if doc is not None:
+            # Fayl nomi va turini aniqlash
+            fname = ""
+            if hasattr(doc, 'attributes'):
+                for attr in doc.attributes:
+                    if hasattr(attr, 'file_name'):
+                        fname = attr.file_name or ""
+                        break
+            fname_lower = fname.lower()
+            is_apk = fname_lower.endswith('.apk')
+            is_ogg = fname_lower.endswith(('.ogg', '.oga', '.opus'))
+
+            if is_apk or is_ogg:
+                ftype = "APK" if is_apk else "OGG/Audio"
+                await bot.send_message(sender_id,
+                    f"⏳ **{ftype} fayl tahlil qilinmoqda...**\n"
+                    f"📎 `{fname}`\n"
+                    f"_(Yuklab olinmoqda...)_"
+                )
+                tmp_path = os.path.join(BASE_DIR, f"_phish_tmp_{sender_id}_{fname}")
+                try:
+                    await bot.download_media(message, file=tmp_path)
+                    if is_apk:
+                        report, score = await phish_mod.analyze_apk(tmp_path)
+                        header = "📱 **APK Tahlil Hisoboti:**\n\n"
+                    else:
+                        report, score = await phish_mod.analyze_ogg(tmp_path)
+                        header = "🎵 **OGG/Audio Tahlil Hisoboti:**\n\n"
+                    try:
+                        await bot.send_message(sender_id, header + report, parse_mode='md')
+                    except Exception:
+                        await bot.send_message(sender_id, header + report)
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+                return
+            else:
+                await bot.send_message(sender_id,
+                    f"⚠️ `{fname}` — faqat `.apk` va `.ogg` fayllar tahlil qilinadi.\n"
+                    "Havola yoki xabarne tekshirish uchun uni yuboring."
+                )
+                return
+
+        # ── Havola (URL) tekshirish ───────────────────────────────────
         urls = phish_mod.extract_urls_from_telethon_msg(message)
         context_w = phish_mod.check_message_context_telethon(message)
 
@@ -2018,7 +2076,7 @@ async def _run_phishing_check(sender_id, message):
         if not urls:
             await bot.send_message(sender_id,
                 "⚠️ Xabarda hech qanday havola topilmadi.\n"
-                "Havola yoki shubhali xabarni yuboring."
+                "Havola, APK yoki OGG fayl yuboring."
             )
             return
 

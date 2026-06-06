@@ -742,3 +742,542 @@ def extract_urls_from_telethon_msg(message) -> set:
     for m in re.finditer(r'https?://[^\s\]>)"\']+', text):
         urls.add(m.group())
     return urls
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 📱 APK TAHLIL
+# ══════════════════════════════════════════════════════════════════════
+
+import zipfile
+import hashlib
+import struct
+import re as _re
+
+# Xavfli Android ruxsatlari → (emoji+nom, xavf bali)
+DANGEROUS_PERMISSIONS = {
+    "READ_SMS":                  ("🔴 SMS o'qish",                        30),
+    "SEND_SMS":                  ("🔴 SMS yuborish",                       30),
+    "RECEIVE_SMS":               ("🔴 SMS qabul qilish",                   25),
+    "RECEIVE_MMS":               ("🟠 MMS qabul qilish",                   20),
+    "READ_CONTACTS":             ("🟠 Kontaktlarni o'qish",                20),
+    "WRITE_CONTACTS":            ("🟠 Kontaktlarga yozish",                15),
+    "READ_CALL_LOG":             ("🟠 Qo'ng'iroq tarixini o'qish",         20),
+    "PROCESS_OUTGOING_CALLS":    ("🔴 Chiquvchi qo'ng'iroqlarni kuzatish", 25),
+    "RECORD_AUDIO":              ("🔴 Mikrofon — ovoz yozish",             30),
+    "CAMERA":                    ("🟠 Kamera",                             15),
+    "ACCESS_FINE_LOCATION":      ("🟠 Aniq GPS joylashuv",                 20),
+    "ACCESS_BACKGROUND_LOCATION":("🔴 Fonda GPS kuzatish",                 35),
+    "READ_EXTERNAL_STORAGE":     ("🟡 Xotirani o'qish",                    10),
+    "WRITE_EXTERNAL_STORAGE":    ("🟡 Xotiraga yozish",                    10),
+    "MANAGE_EXTERNAL_STORAGE":   ("🔴 Barcha xotiraga kirish",             30),
+    "RECEIVE_BOOT_COMPLETED":    ("🟠 Qurilma yonishi bilan autostart",     15),
+    "FOREGROUND_SERVICE":        ("🟡 Fon xizmati",                        10),
+    "REQUEST_INSTALL_PACKAGES":  ("🔴 Boshqa APK o'rnatish",               35),
+    "BIND_ACCESSIBILITY_SERVICE":("🔴 Accessibility — klaviatura/ekran o'qish", 40),
+    "SYSTEM_ALERT_WINDOW":       ("🔴 Ekran ustida oyna (overlay)",        30),
+    "DISABLE_KEYGUARD":          ("🔴 Ekran qulfini o'chirish",            25),
+    "READ_PHONE_STATE":          ("🟡 Telefon IMEI/SIM holati",            10),
+    "GET_ACCOUNTS":              ("🟠 Google/boshqa hisoblarni o'qish",    15),
+    "USE_CREDENTIALS":           ("🟠 Hisob ma'lumotlariga kirish",        20),
+    "CHANGE_NETWORK_STATE":      ("🟡 Tarmoq sozlamalarini o'zgartirish",  10),
+    "CHANGE_WIFI_STATE":         ("🟡 Wi-Fi sozlamalarini o'zgartirish",   10),
+    "BLUETOOTH_ADMIN":           ("🟡 Bluetooth boshqaruvi",               10),
+}
+
+# Ma'lumot uzatish uchun ishlatiladigan shubhali URL patternlar
+DATA_EXFIL_PATTERNS = [
+    (_re.compile(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'),
+     "🔴 To'g'ridan IP manziliga ma'lumot uzatish"),
+    (_re.compile(r'api\.telegram\.org/bot[\w:]+/send'),
+     "🔴 Telegram bot API — ma'lumotlar Telegram botga yuborilmoqda!"),
+    (_re.compile(r'https?://[^/\s]+\.(ru|cn|ir|by|kp)/'),
+     "🟠 Shubhali mamlakatdagi server (RU/CN/IR/BY/KP)"),
+    (_re.compile(r'https?://[^/\s]+\.onion'),
+     "🔴 Tor tarmoqiga ma'lumot uzatish"),
+    (_re.compile(r'(?:webhook|exfil|upload|collect|steal|gate|panel|log\.php)'),
+     "🔴 C2/phishing panel endpoint aniqlandi"),
+    (_re.compile(r'https?://ngrok\.io|\.ngrok\.app'),
+     "🟠 ngrok tunnel — vaqtinchalik yashirin server"),
+    (_re.compile(r'https?://[^/\s]+pastebin\.com'),
+     "🟡 Pastebin — konfiguratsiya yashiringan bo'lishi mumkin"),
+]
+
+
+def _apk_hash(path: str) -> dict:
+    """MD5, SHA1, SHA256 hisoblaydi."""
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    sha256 = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(65536), b''):
+            md5.update(chunk)
+            sha1.update(chunk)
+            sha256.update(chunk)
+    return {"md5": md5.hexdigest(), "sha1": sha1.hexdigest(), "sha256": sha256.hexdigest()}
+
+
+def _check_vt_hash(sha256: str) -> dict:
+    """VirusTotal da hash orqali tekshirish (fayl yuklamaydi)."""
+    vt_key = os.getenv("VIRUSTOTAL_API_KEY", "").strip()
+    if not vt_key:
+        return {"available": False}
+    try:
+        resp = requests.get(
+            f"https://www.virustotal.com/api/v3/files/{sha256}",
+            headers={"x-apikey": vt_key}, timeout=10
+        )
+        if resp.status_code == 200:
+            stats = resp.json().get("data", {}).get("attributes", {}).get("last_analysis_stats", {})
+            name  = resp.json().get("data", {}).get("attributes", {}).get("meaningful_name", "")
+            return {"available": True,
+                    "malicious": stats.get("malicious", 0),
+                    "suspicious": stats.get("suspicious", 0),
+                    "total": sum(stats.values()),
+                    "name": name}
+        if resp.status_code == 404:
+            return {"available": True, "not_found": True}
+    except Exception:
+        pass
+    return {"available": False}
+
+
+def _extract_strings_from_binary(data: bytes, min_len: int = 5) -> list:
+    """Binary ma'lumotdan o'qilishi mumkin bo'lgan satrlarni ajratib oladi."""
+    # ASCII satrlar
+    ascii_strings = _re.findall(rb'[\x20-\x7e]{%d,}' % min_len, data)
+    results = set()
+    for s in ascii_strings:
+        try:
+            results.add(s.decode('ascii'))
+        except Exception:
+            pass
+    # UTF-16LE satrlar (Android binary XML da ishlatiladi)
+    utf16_strings = _re.findall(rb'(?:[\x20-\x7e]\x00){%d,}' % min_len, data)
+    for s in utf16_strings:
+        try:
+            decoded = s.decode('utf-16-le').strip('\x00').strip()
+            if len(decoded) >= min_len:
+                results.add(decoded)
+        except Exception:
+            pass
+    return list(results)
+
+
+def _find_permissions(strings: list) -> list:
+    """Satrlar ichidan Android ruxsatlarini topadi."""
+    found = []
+    for s in strings:
+        # android.permission.READ_SMS → READ_SMS
+        if 'android.permission.' in s:
+            perm = s.split('android.permission.')[-1].split('\x00')[0].strip()
+            if perm and perm.upper() == perm and len(perm) > 2:
+                found.append(perm)
+        # com.google.android.c2dm.permission.RECEIVE kabi
+        elif '.permission.' in s:
+            perm = s.split('.permission.')[-1].split('\x00')[0].strip()
+            if perm and len(perm) > 2:
+                found.append(perm)
+    return list(set(found))
+
+
+def _find_network_endpoints(strings: list) -> list:
+    """Satrlar ichidan URL va IP manzillarni topadi."""
+    endpoints = set()
+    url_pat = _re.compile(r'https?://[^\s\'"<>]{6,}')
+    ip_pat  = _re.compile(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b')
+    for s in strings:
+        for m in url_pat.finditer(s):
+            u = m.group().rstrip('.,);\'\"')
+            if len(u) > 10:
+                endpoints.add(u)
+        for m in ip_pat.finditer(s):
+            ip = m.group()
+            if not ip.startswith(('127.', '10.', '192.168.', '0.', '255.')):
+                endpoints.add(ip)
+    return list(endpoints)
+
+
+def _apk_risk_score(permissions: list, endpoints: list, vt: dict, file_size_mb: float) -> tuple:
+    score = 0
+    reasons = []
+
+    # VirusTotal
+    if vt.get("available") and not vt.get("not_found"):
+        mal = vt.get("malicious", 0)
+        if mal > 0:
+            score += min(mal * 6, 50)
+            reasons.append(f"🔴 VirusTotal: {mal}/{vt.get('total', 0)} engine xavfli dedi")
+    elif vt.get("not_found"):
+        score += 10
+        reasons.append("🟡 VirusTotal bazasida topilmadi — yangi/noma'lum APK")
+
+    # Ruxsatlar
+    perm_score = 0
+    found_dangerous = []
+    for perm in permissions:
+        info = DANGEROUS_PERMISSIONS.get(perm.upper())
+        if info:
+            label, pts = info
+            if pts >= 25:
+                perm_score += pts
+                found_dangerous.append(f"{label} (`{perm}`)")
+    score += min(perm_score, 60)
+    reasons.extend(found_dangerous[:10])
+
+    # Tarmoq endpointlari
+    exfil_found = []
+    for ep in endpoints:
+        for pat, msg in DATA_EXFIL_PATTERNS:
+            if pat.search(ep):
+                short_ep = ep[:80]
+                item = f"{msg}: `{short_ep}`"
+                if item not in exfil_found:
+                    exfil_found.append(item)
+                    score += 20
+                break
+    reasons.extend(exfil_found[:8])
+
+    # Fayl hajmi shubhali bo'lsa
+    if file_size_mb > 50:
+        score += 5
+        reasons.append(f"🟡 Fayl hajmi katta: {file_size_mb:.1f} MB")
+
+    return min(score, 100), reasons
+
+
+async def analyze_apk(file_path: str) -> tuple:
+    """
+    APK faylni tahlil qiladi.
+    Qaytaradi: (report_text, risk_score)
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+
+        # ZIP sifatida ochish
+        try:
+            zf = zipfile.ZipFile(file_path, 'r')
+            names = zf.namelist()
+        except zipfile.BadZipFile:
+            return "❌ Bu haqiqiy APK fayl emas (ZIP ochib bo'lmadi).", 80
+
+        has_manifest = 'AndroidManifest.xml' in names
+        has_dex      = any(n.endswith('.dex') for n in names)
+        has_classes  = 'classes.dex' in names
+
+        if not has_manifest or not has_dex:
+            zf.close()
+            return "❌ AndroidManifest.xml yoki classes.dex topilmadi — haqiqiy APK emas.", 70
+
+        # Hash hisoblash va VirusTotal parallel
+        hashes = await loop.run_in_executor(executor, _apk_hash, file_path)
+        vt = await loop.run_in_executor(executor, _check_vt_hash, hashes['sha256'])
+
+        # AndroidManifest.xml dan ruxsatlarni ajratish
+        manifest_data = zf.read('AndroidManifest.xml')
+        manifest_strings = await loop.run_in_executor(
+            executor, _extract_strings_from_binary, manifest_data, 4
+        )
+        permissions = _find_permissions(manifest_strings)
+
+        # Paket nomi
+        pkg_name = ""
+        for s in manifest_strings:
+            if s.count('.') >= 2 and s.replace('.', '').replace('_', '').isalnum() and len(s) > 8:
+                pkg_name = s
+                break
+
+        # classes.dex dan URL va IP topish
+        dex_names = [n for n in names if n.endswith('.dex')]
+        all_dex_strings = []
+        for dex_name in dex_names[:3]:  # Faqat birinchi 3 ta DEX
+            dex_data = zf.read(dex_name)
+            dex_strings = await loop.run_in_executor(
+                executor, _extract_strings_from_binary, dex_data, 6
+            )
+            all_dex_strings.extend(dex_strings)
+
+        zf.close()
+
+        # Tarmoq endpointlari
+        endpoints = _find_network_endpoints(all_dex_strings + manifest_strings)
+
+        # Xavf hisoblash
+        score, reasons = _apk_risk_score(permissions, endpoints, vt, file_size_mb)
+        label = risk_label(score)
+
+        # Ruxsatlar ro'yxati
+        dangerous_perms = []
+        normal_perms = []
+        for p in sorted(set(permissions)):
+            info = DANGEROUS_PERMISSIONS.get(p.upper())
+            if info and info[1] >= 15:
+                dangerous_perms.append(f"  {info[0]}")
+            elif info and info[1] > 0:
+                normal_perms.append(f"  🟡 {p}")
+            elif p.upper() not in DANGEROUS_PERMISSIONS:
+                pass  # Noma'lum ruxsatlar
+
+        # Endpointlar (qisqartirilgan)
+        ep_lines = ""
+        if endpoints:
+            ep_show = []
+            for ep in endpoints[:10]:
+                # Shubhali pattern bor-yo'qligini tekshir
+                is_suspicious = any(pat.search(ep) for pat, _ in DATA_EXFIL_PATTERNS)
+                icon = "🔴" if is_suspicious else "⚪"
+                ep_show.append(f"  {icon} `{ep[:70]}`")
+            ep_lines = "\n🌐 *Tarmoq endpointlari:*\n" + "\n".join(ep_show)
+
+        # VirusTotal natijasi
+        if vt.get("available") and not vt.get("not_found"):
+            mal = vt.get("malicious", 0)
+            vt_str = f"{'🔴' if mal > 0 else '🟢'} {mal}/{vt.get('total', 0)} engine xavfli dedi"
+        elif vt.get("not_found"):
+            vt_str = "🟡 Bazada topilmadi"
+        else:
+            vt_str = "⚪ API kalit yo'q"
+
+        perms_str = ""
+        if dangerous_perms:
+            perms_str += "\n🚨 *Xavfli ruxsatlar:*\n" + "\n".join(dangerous_perms[:15])
+        if normal_perms:
+            perms_str += "\n🟡 *Oddiy ruxsatlar:*\n" + "\n".join(normal_perms[:8])
+        if not permissions:
+            perms_str = "\n⚪ Ruxsatlar topilmadi (yashirilgan bo'lishi mumkin)"
+
+        _pkg_str      = pkg_name if pkg_name else "Noma'lum"
+        _manifest_str = "✅ Manifest bor" if has_manifest else "❌ Manifest yo'q"
+        report = (
+            f"📱 *APK Tahlil Hisoboti*\n\n"
+            f"📦 *Paket nomi:* `{_pkg_str}`\n"
+            f"📏 *Hajm:* {file_size_mb:.2f} MB\n"
+            f"🗂 *DEX fayl:* {len(dex_names)} ta · {_manifest_str}\n"
+            f"🔑 *MD5:* `{hashes['md5']}`\n"
+            f"🔑 *SHA256:* `{hashes['sha256'][:32]}...`\n\n"
+            f"🦠 *VirusTotal:* {vt_str}\n"
+            f"{perms_str}"
+            f"{ep_lines}\n\n"
+            f"📊 *Xavf darajasi: {score}/100 — {label}*"
+        )
+
+        if reasons:
+            reasons_block = "\n\n*⚠️ Topilgan muammolar:*\n" + "\n".join(reasons[:10])
+            if len(report) + len(reasons_block) < 4000:
+                report += reasons_block
+
+        return report, score
+
+    except Exception as e:
+        return f"❌ APK tahlil xatosi: {e}", 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 🎵 OGG / AUDIO FAYL TAHLIL
+# ══════════════════════════════════════════════════════════════════════
+
+OGG_MAGIC    = b'OggS'
+VORBIS_MAGIC = b'\x01vorbis'
+
+
+def _parse_ogg_comments(data: bytes) -> dict:
+    """
+    Vorbis comment header dan metadata o'qiydi.
+    Format: \x03vorbis → vendor string → user comments
+    """
+    result = {"vendor": "", "comments": [], "suspicious": []}
+    try:
+        pos = data.find(b'\x03vorbis')
+        if pos < 0:
+            return result
+        pos += 7  # skip \x03vorbis
+
+        vendor_len = struct.unpack_from('<I', data, pos)[0]
+        pos += 4
+        vendor = data[pos:pos + vendor_len].decode('utf-8', errors='replace')
+        result["vendor"] = vendor
+        pos += vendor_len
+
+        comment_count = struct.unpack_from('<I', data, pos)[0]
+        pos += 4
+
+        for _ in range(min(comment_count, 50)):
+            if pos + 4 > len(data):
+                break
+            clen = struct.unpack_from('<I', data, pos)[0]
+            pos += 4
+            if clen > 10000 or pos + clen > len(data):
+                break
+            comment = data[pos:pos + clen].decode('utf-8', errors='replace')
+            result["comments"].append(comment)
+            pos += clen
+
+            # Shubhali kontent tekshirish
+            cl = comment.lower()
+            if any(kw in cl for kw in ['http', 'password', 'token', 'key=', 'secret', 'cmd=', 'exec']):
+                result["suspicious"].append(comment[:200])
+    except Exception:
+        pass
+    return result
+
+
+def _ogg_file_info(data: bytes) -> dict:
+    """OGG fayl haqida asosiy ma'lumotlar."""
+    info = {"pages": 0, "is_valid": False, "has_audio": False}
+    pos = 0
+    page_count = 0
+    while pos + 27 <= len(data):
+        if data[pos:pos + 4] != OGG_MAGIC:
+            break
+        # OGG page header
+        if pos + 27 > len(data):
+            break
+        segments = data[pos + 26]
+        seg_table_end = pos + 27 + segments
+        if seg_table_end > len(data):
+            break
+        seg_sizes = list(data[pos + 27: seg_table_end])
+        page_size = sum(seg_sizes)
+        page_count += 1
+        # Vorbis header tekshiruvi
+        payload_start = seg_table_end
+        if payload_start < len(data) and data[payload_start:payload_start + 7] == VORBIS_MAGIC:
+            info["has_audio"] = True
+        pos = seg_table_end + page_size
+        if page_count > 100:
+            break
+    info["pages"] = page_count
+    info["is_valid"] = page_count > 0
+    return info
+
+
+async def analyze_ogg(file_path: str) -> tuple:
+    """
+    OGG/audio faylni tahlil qiladi.
+    Qaytaradi: (report_text, risk_score)
+    """
+    loop = asyncio.get_event_loop()
+    try:
+        file_size = os.path.getsize(file_path)
+        file_size_kb = file_size / 1024
+
+        with open(file_path, 'rb') as f:
+            data = f.read()
+
+        score = 0
+        findings = []
+
+        # 1. Magic bytes tekshiruvi
+        is_ogg = data[:4] == OGG_MAGIC
+        if not is_ogg:
+            score += 60
+            magic_hex = data[:4].hex().upper()
+            findings.append(f"🔴 Fayl OGG EMAS! Magic bytes: `{magic_hex}` — yashirin fayl bo'lishi mumkin!")
+            # Haqiqiy fayl turini aniqlash
+            known_magic = {
+                b'PK\x03\x04': "ZIP/APK/JAR",
+                b'MZ': "Windows EXE",
+                b'\x7fELF': "Linux ELF (Linux bajariladigan fayl)",
+                b'\xca\xfe\xba\xbe': "Java CLASS fayl",
+                b'%PDF': "PDF",
+                b'\xff\xd8\xff': "JPEG rasm",
+                b'\x89PNG': "PNG rasm",
+            }
+            for magic, name in known_magic.items():
+                if data[:len(magic)] == magic:
+                    findings.append(f"🔴 Haqiqiy format: **{name}** — OGG deb niqoblangan!")
+                    score += 30
+                    break
+
+        # 2. OGG sahifalarini parse qilish
+        ogg_info = {}
+        comments_data = {}
+        if is_ogg:
+            ogg_info  = await loop.run_in_executor(executor, _ogg_file_info, data)
+            comments_data = await loop.run_in_executor(executor, _parse_ogg_comments, data)
+
+            if not ogg_info.get("is_valid"):
+                score += 20
+                findings.append("🟠 OGG format noto'g'ri tuzilgan — shubhali")
+
+            if not ogg_info.get("has_audio"):
+                score += 25
+                findings.append("🔴 OGG da audio ma'lumot topilmadi — niqoblangan fayl bo'lishi mumkin!")
+
+            # 3. Vorbis metadata tekshiruvi
+            if comments_data.get("suspicious"):
+                score += 40
+                for s in comments_data["suspicious"][:3]:
+                    findings.append(f"🔴 Metadatada shubhali ma'lumot: `{s[:100]}`")
+
+            # URL yoki kod metadata da bormi
+            for comment in comments_data.get("comments", []):
+                if _re.search(r'https?://', comment):
+                    score += 20
+                    findings.append(f"🟠 Metadatada havola: `{comment[:100]}`")
+                    break
+
+        # 4. Hajm anomaliyasi (64kbps OGG → ~8KB/s)
+        # Agar sahifalar ko'p bo'lsa, lekin hajm g'alati bo'lsa
+        if is_ogg and ogg_info.get("pages", 0) > 0:
+            pages = ogg_info["pages"]
+            expected_max_kb = pages * 10  # taxminan
+            if file_size_kb > expected_max_kb * 50:
+                score += 15
+                findings.append(f"🟡 Fayl hajmi g'alati katta: {file_size_kb:.0f} KB / {pages} sahifa")
+
+        # 5. Hash va VirusTotal
+        sha256 = hashlib.sha256(data).hexdigest()
+        md5    = hashlib.md5(data).hexdigest()
+        vt = await loop.run_in_executor(executor, _check_vt_hash, sha256)
+
+        if vt.get("available") and not vt.get("not_found"):
+            mal = vt.get("malicious", 0)
+            if mal > 0:
+                score += min(mal * 6, 40)
+                findings.append(f"🔴 VirusTotal: {mal}/{vt.get('total', 0)} engine xavfli dedi")
+            vt_str = f"{'🔴' if mal > 0 else '🟢'} {mal}/{vt.get('total', 0)} engine"
+        elif vt.get("not_found"):
+            vt_str = "🟡 Bazada topilmadi"
+        else:
+            vt_str = "⚪ API kalit yo'q"
+
+        score = min(score, 100)
+        label = risk_label(score)
+
+        # Metadata bloki
+        meta_block = ""
+        if comments_data:
+            vendor = comments_data.get("vendor", "")
+            comments = comments_data.get("comments", [])
+            if vendor:
+                meta_block += f"🎙 *Encoder:* `{vendor[:80]}`\n"
+            if comments:
+                clean = [c for c in comments if not any(kw in c.lower()
+                         for kw in ['http', 'password', 'token', 'secret'])]
+                if clean:
+                    meta_block += "🏷 *Metadata:*\n" + "\n".join(f"  `{c[:80]}`" for c in clean[:5]) + "\n"
+
+        report = (
+            f"🎵 *OGG/Audio Fayl Tahlil Hisoboti*\n\n"
+            f"📏 *Hajm:* {file_size_kb:.1f} KB\n"
+            f"{'✅ Haqiqiy OGG' if is_ogg else '❌ OGG EMAS'}"
+            + (f" · {ogg_info.get('pages', 0)} sahifa" if is_ogg and ogg_info else "")
+            + f"\n"
+            f"🔑 *MD5:* `{md5}`\n"
+            f"🔑 *SHA256:* `{sha256[:32]}...`\n"
+            f"🦠 *VirusTotal:* {vt_str}\n"
+            f"{meta_block}\n"
+            f"📊 *Xavf darajasi: {score}/100 — {label}*"
+        )
+
+        if findings:
+            findings_block = "\n\n*⚠️ Topilgan muammolar:*\n" + "\n".join(findings[:10])
+            if len(report) + len(findings_block) < 4000:
+                report += findings_block
+
+        return report, score
+
+    except Exception as e:
+        return f"❌ OGG tahlil xatosi: {e}", 0
