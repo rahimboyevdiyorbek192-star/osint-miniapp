@@ -4329,12 +4329,29 @@ def _extract_invite_hash(ch: str) -> str:
     return ch
 
 
+def _normalize_channel_link(ch: str) -> str:
+    """
+    t.me/c/NUMERIC_ID/MSG_ID  →  -100NUMERIC_ID
+    t.me/c/NUMERIC_ID          →  -100NUMERIC_ID
+    Boshqa formatlar o'zgarmaydi.
+    """
+    ch = ch.strip()
+    # https://t.me/c/1234567890/5  yoki  t.me/c/1234567890
+    if 't.me/c/' in ch:
+        after = ch.split('t.me/c/')[-1].rstrip('/')
+        numeric_id = after.split('/')[0].split('?')[0]
+        if numeric_id.isdigit():
+            return f"-100{numeric_id}"
+    return ch
+
+
 async def _excel_join_channel(userbot, ch: str):
     """
     Kanalga qo'shiladi va (entity, scan_target) juftini qaytaradi.
     scan_target — scan_channel_comments ga beriladigan identifikator.
     Muvaffaqiyatsiz bo'lsa — exception chiqaradi.
     """
+    ch = _normalize_channel_link(ch)
     is_invite = _is_invite_link(ch)
 
     # 1. Avval oddiy entity resolve — ko'pincha a'zo bo'lgan kanallar shunday topiladi
