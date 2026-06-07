@@ -669,7 +669,15 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                                 _ochiq = ", ".join(oc) if oc else ""
                                 pc  = getattr(fu, 'personal_channel_id', None)
                                 if pc:
-                                    _shaxsiy = f"https://t.me/c/{pc}/1"
+                                    try:
+                                        _pc_e  = await asyncio.wait_for(
+                                            userbot.get_entity(pc), timeout=8
+                                        )
+                                        _pc_un = getattr(_pc_e, 'username', None)
+                                        _shaxsiy = (f"https://t.me/{_pc_un}" if _pc_un
+                                                    else f"https://t.me/c/{pc}/1")
+                                    except Exception:
+                                        _shaxsiy = f"https://t.me/c/{pc}/1"
                                     asyncio.ensure_future(_save_pc_id_to_cache(pc))
                                 if inv:
                                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db:
@@ -809,7 +817,15 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                 ochiq = ", ".join(oc) if oc else ""
                 pc = getattr(fu, 'personal_channel_id', None)
                 if pc:
-                    shaxsiy = f"https://t.me/c/{pc}/1"
+                    try:
+                        pc_ent   = await asyncio.wait_for(
+                            userbot.get_entity(pc), timeout=8
+                        )
+                        pc_uname = getattr(pc_ent, 'username', None)
+                        shaxsiy  = (f"https://t.me/{pc_uname}" if pc_uname
+                                    else f"https://t.me/c/{pc}/1")
+                    except Exception:
+                        shaxsiy = f"https://t.me/c/{pc}/1"
                     asyncio.ensure_future(_save_pc_id_to_cache(pc))
                 if inv:
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db:
@@ -1567,7 +1583,15 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                         await db.commit()
                 ch_id = getattr(fi.full_user, 'personal_channel_id', None)
                 if ch_id:
-                    shaxsiy = f"https://t.me/c/{ch_id}/1"
+                    try:
+                        pc_ent   = await asyncio.wait_for(
+                            userbot.get_entity(ch_id), timeout=8
+                        )
+                        pc_uname = getattr(pc_ent, 'username', None)
+                        shaxsiy  = (f"https://t.me/{pc_uname}" if pc_uname
+                                    else f"https://t.me/c/{ch_id}/1")
+                    except Exception:
+                        shaxsiy = f"https://t.me/c/{ch_id}/1"
                     asyncio.ensure_future(_save_pc_id_to_cache(ch_id))
             except FloodWaitError as e:
                 _record_flood(e.seconds)
@@ -1826,7 +1850,15 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                             await db.commit()
                     ch_id = getattr(fi.full_user, 'personal_channel_id', None)
                     if ch_id:
-                        shaxsiy = f"https://t.me/c/{ch_id}/1"
+                        try:
+                            pc_ent   = await asyncio.wait_for(
+                                userbot.get_entity(ch_id), timeout=8
+                            )
+                            pc_uname = getattr(pc_ent, 'username', None)
+                            shaxsiy  = (f"https://t.me/{pc_uname}" if pc_uname
+                                        else f"https://t.me/c/{ch_id}/1")
+                        except Exception:
+                            shaxsiy = f"https://t.me/c/{ch_id}/1"
                         asyncio.ensure_future(_save_pc_id_to_cache(ch_id))
                 except FloodWaitError as e:
                     _record_flood(e.seconds)
