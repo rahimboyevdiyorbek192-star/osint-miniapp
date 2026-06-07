@@ -2385,6 +2385,39 @@ async def show_control_panel(event_or_msg, edit=False):
         await event_or_msg.respond(text, buttons=buttons)
 
 
+@bot.on(events.NewMessage(pattern=r"^/fix_links$"))
+async def cmd_fix_links(event):
+    if not await is_admin(event.sender_id):
+        return
+    status = await event.respond(
+        "🔄 **Migratsiya boshlandi**\n"
+        "`https://t.me/c/ID/1` → `https://t.me/username` formatga o'tkazilmoqda...\n"
+        "Bu biroz vaqt olishi mumkin."
+    )
+    asyncio.create_task(_run_fix_links(event.sender_id, status))
+
+
+async def _run_fix_links(sender_id, status_msg):
+    try:
+        updated, total, unique_res, prog_upd = await engine.migrate_pc_links(
+            userbot, bot=bot, admin_id=sender_id
+        )
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await bot.send_message(
+            sender_id,
+            f"✅ **Migratsiya yakunlandi!**\n\n"
+            f"📊 Tekshirilgan qatorlar: `{total}` ta\n"
+            f"✏️ O'zgartirildi: `{updated}` ta\n"
+            f"🔗 Unikal kanal IDlar hal qilindi: `{unique_res}` ta\n"
+            f"🎵 Musiqa progress yangilandi: `{prog_upd}` ta"
+        )
+    except Exception as e:
+        await bot.send_message(sender_id, f"❌ Xatolik: {e}")
+
+
 @bot.on(events.CallbackQuery(pattern=b"bot_restart"))
 async def bot_restart_cb(event):
     if not await is_admin(event.sender_id):

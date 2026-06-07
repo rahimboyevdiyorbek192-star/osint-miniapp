@@ -4478,6 +4478,140 @@ async def _excel_join_channel(userbot, ch: str):
     return entity, scan_t
 
 
+# ─────────────────────────────────────────────────────────────────────
+# BAZADAGI ESKI t.me/c/ID/1 LINKLARNI @USERNAME GA O'GIRISH
+# ─────────────────────────────────────────────────────────────────────
+
+_PC_RESOLVE_CACHE: dict = {}   # ch_id (int) → resolved link (str)
+_PC_LINK_RE = re.compile(r'https?://t\.me/c/(\d+)(?:/\d+)?')
+
+
+async def _resolve_one_pc_id(userbot, ch_id: int, original: str) -> str:
+    """ch_id ni username ga aylantiradi. Cache ishlatadi."""
+    if ch_id in _PC_RESOLVE_CACHE:
+        return _PC_RESOLVE_CACHE[ch_id]
+    try:
+        ent   = await asyncio.wait_for(userbot.get_entity(ch_id), timeout=8)
+        uname = getattr(ent, 'username', None)
+        link  = f"https://t.me/{uname}" if uname else original
+    except Exception:
+        link = original
+    _PC_RESOLVE_CACHE[ch_id] = link
+    return link
+
+
+async def migrate_pc_links(userbot, bot=None, admin_id=None) -> tuple:
+    """
+    users_memory_bank.has_hidden va open_channels ustunlaridagi
+    https://t.me/c/NUMERIC_ID/1  →  https://t.me/username
+    formatiga o'tkazadi.
+    Bir marta ishlatiladigan migratsiya funksiyasi.
+    Qaytaradi: (updated_rows, total_rows, unique_resolved)
+    """
+    # 1. Barcha t.me/c/ bo'lgan qatorlarni olish
+    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+        async with db.execute(
+            "SELECT user_id, group_link, has_hidden, open_channels "
+            "FROM users_memory_bank "
+            "WHERE has_hidden LIKE '%t.me/c/%' OR open_channels LIKE '%t.me/c/%'"
+        ) as cur:
+            rows = await cur.fetchall()
+
+    total   = len(rows)
+    updated = 0
+    unique_resolved = 0
+
+    for idx, (uid, grp, has_hidden, open_channels) in enumerate(rows):
+
+        # ── has_hidden ───────────────────────────────────────────────
+        new_has_hidden = has_hidden or ""
+        changed = False
+        for m in _PC_LINK_RE.finditer(has_hidden or ""):
+            ch_id    = int(m.group(1))
+            old_link = m.group(0)
+            if ch_id not in _PC_RESOLVE_CACHE:
+                unique_resolved += 1
+                await asyncio.sleep(0.35)  # flood oldini olish
+            new_link = await _resolve_one_pc_id(userbot, ch_id, old_link)
+            if new_link != old_link:
+                new_has_hidden = new_has_hidden.replace(old_link, new_link)
+                changed = True
+
+        # ── open_channels ────────────────────────────────────────────
+        new_open = open_channels or ""
+        for m in _PC_LINK_RE.finditer(open_channels or ""):
+            ch_id    = int(m.group(1))
+            old_link = m.group(0)
+            if ch_id not in _PC_RESOLVE_CACHE:
+                unique_resolved += 1
+                await asyncio.sleep(0.35)
+            new_link = await _resolve_one_pc_id(userbot, ch_id, old_link)
+            if new_link != old_link:
+                new_open = new_open.replace(old_link, new_link)
+                changed = True
+
+        if changed:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                await db.execute(
+                    "UPDATE users_memory_bank "
+                    "SET has_hidden=?, open_channels=? "
+                    "WHERE user_id=? AND group_link=?",
+                    (new_has_hidden, new_open, uid, grp)
+                )
+                await db.commit()
+            updated += 1
+
+        # Progress xabari har 100 qatorda
+        if bot and admin_id and (idx + 1) % 100 == 0:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    f"🔄 Migratsiya: `{idx + 1}/{total}` qator tekshirildi | "
+                    f"✅ O'zgartirildi: `{updated}` ta"
+                )
+            except Exception:
+                pass
+
+    # music_channel_progress da ham eski linklarni yangilash
+    progress_updated = 0
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+            async with db.execute(
+                "SELECT source FROM music_channel_progress "
+                "WHERE source LIKE '%t.me/c/%'"
+            ) as cur:
+                old_sources = await cur.fetchall()
+        for (old_src,) in old_sources:
+            m = _PC_LINK_RE.search(old_src)
+            if m:
+                ch_id    = int(m.group(1))
+                new_src  = _PC_RESOLVE_CACHE.get(ch_id)
+                if new_src and new_src != old_src:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                        # Yangi source allaqachon bor bo'lsa — eskisini o'chirish
+                        async with db.execute(
+                            "SELECT 1 FROM music_channel_progress WHERE source=?",
+                            (new_src,)
+                        ) as cur2:
+                            exists = await cur2.fetchone()
+                        if exists:
+                            await db.execute(
+                                "DELETE FROM music_channel_progress WHERE source=?",
+                                (old_src,)
+                            )
+                        else:
+                            await db.execute(
+                                "UPDATE music_channel_progress SET source=? WHERE source=?",
+                                (new_src, old_src)
+                            )
+                        await db.commit()
+                    progress_updated += 1
+    except Exception:
+        pass
+
+    return updated, total, unique_resolved, progress_updated
+
+
 async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
                                userbot_idx: int = 0):
     """
