@@ -1693,9 +1693,11 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
         except Exception:
             pass
 
-        # 3. Discussion guruhdan xabar yozganlarni yig'ish
-        unique_users = {}  # user_id → user object
-        _msg_count = 0
+        # 3. Discussion guruhdan xabar yozganlarni yig'ish + messages_cache ga yozish
+        unique_users  = {}   # user_id → user object
+        _msg_count    = 0
+        _cache_batch  = []
+        _src_str      = str(target)
 
         async for msg in userbot.iter_messages(discussion_group, limit=None):
             if not msg.sender_id:
@@ -1707,7 +1709,37 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                 sender = msg.sender
                 if sender and not getattr(sender, 'bot', False):
                     unique_users[msg.sender_id] = sender
-            # Har 500 xabarda progress ko'rsatish — muzlab qolmagan
+
+            # Matnli xabarlarni keshga yig'ish
+            if msg.text and len(msg.text) > 2:
+                sender = msg.sender
+                s_name = ""
+                s_un   = ""
+                if sender and hasattr(sender, 'first_name'):
+                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                    s_un   = getattr(sender, 'username', '') or ""
+                msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                _cache_batch.append((
+                    msg.id, _src_str, msg.sender_id,
+                    s_name, s_un, msg.text[:500], msg_dt
+                ))
+
+            # Har 300 xabarda batch-insert
+            if len(_cache_batch) >= 300:
+                try:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                        await _db.executemany(
+                            "INSERT OR IGNORE INTO messages_cache "
+                            "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                            "VALUES (?,?,?,?,?,?,?)",
+                            _cache_batch
+                        )
+                        await _db.commit()
+                except Exception:
+                    pass
+                _cache_batch = []
+
+            # Har 500 xabarda progress ko'rsatish
             if _msg_count % 500 == 0:
                 try:
                     await status_msg.edit(
@@ -1716,6 +1748,20 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                     )
                 except Exception:
                     pass
+
+        # Qolgan xabarlarni keshga yozish
+        if _cache_batch:
+            try:
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                    await _db.executemany(
+                        "INSERT OR IGNORE INTO messages_cache "
+                        "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                        "VALUES (?,?,?,?,?,?,?)",
+                        _cache_batch
+                    )
+                    await _db.commit()
+            except Exception:
+                pass
 
         total = len(unique_users)
         if not total:
