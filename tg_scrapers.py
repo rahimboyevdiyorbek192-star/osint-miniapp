@@ -4315,10 +4315,80 @@ async def generate_tergov_pdf(userbot, identifier: str) -> str:
 # EXCEL BATCH SKANERLASH
 # ─────────────────────────────────────────────────────────────────────
 
+def _is_invite_link(ch: str) -> bool:
+    """t.me/+hash yoki t.me/joinchat/hash formatini aniqlaydi."""
+    return '/+' in ch or 'joinchat/' in ch
+
+
+def _extract_invite_hash(ch: str) -> str:
+    """Invite linkdan hash qismini ajratib oladi."""
+    if '/+' in ch:
+        return ch.split('/+')[-1].rstrip('/').split('?')[0]
+    if 'joinchat/' in ch:
+        return ch.split('joinchat/')[-1].rstrip('/').split('?')[0]
+    return ch
+
+
+async def _excel_join_channel(userbot, ch: str):
+    """
+    Kanalga qo'shiladi va (entity, scan_target) juftini qaytaradi.
+    scan_target — scan_channel_comments ga beriladigan identifikator.
+    Muvaffaqiyatsiz bo'lsa — exception chiqaradi.
+    """
+    is_invite = _is_invite_link(ch)
+
+    # 1. Avval oddiy entity resolve — ko'pincha a'zo bo'lgan kanallar shunday topiladi
+    try:
+        entity = await userbot.get_entity(ch)
+        ch_id  = getattr(entity, 'id', None)
+        scan_t = f"-100{ch_id}" if ch_id else ch
+        return entity, scan_t
+    except Exception:
+        pass
+
+    # 2. Invite link: ImportChatInviteRequest
+    if is_invite:
+        hash_part = _extract_invite_hash(ch)
+        try:
+            updates = await userbot(ImportChatInviteRequest(hash=hash_part))
+            # Yangi qo'shilgan chat updates.chats[0] ichida
+            if getattr(updates, 'chats', None):
+                entity = updates.chats[0]
+                ch_id  = getattr(entity, 'id', None)
+                scan_t = f"-100{ch_id}" if ch_id else ch
+                return entity, scan_t
+            # updates.chat_invite — faqat ma'lumot, a'zo qilinmagan (so'rov yuborildi)
+            # Shu holda entity yo'q, scan qilolmaymiz — lekin exception chiqarmaymiz
+            raise Exception("So'rov yuborildi, kanal ochilishini kuting")
+        except Exception as inv_e:
+            err_l = str(inv_e).lower()
+            if 'already' in err_l or 'participant' in err_l:
+                # A'zo bo'lib, invite link orqali resolve ish bermadi →
+                # Dialoglarda topishga urinish
+                async for dlg in userbot.iter_dialogs(limit=300):
+                    ent = dlg.entity
+                    # Ism yoki boshqa belgilar bilan moslashtirish imkoni yo'q,
+                    # shuning uchun faqat dialoglardagi invite linkni saqlagan kanallarni olish
+                    # (bu qiyin; invite hash dan ID ni bilish mumkin emas)
+                    pass
+                raise Exception("Allaqachon a'zo, lekin kanal ID aniqlanmadi — @username yoki ID yuboring")
+            raise inv_e
+
+    # 3. Ochiq kanal / guruh: JoinChannelRequest
+    await userbot(JoinChannelRequest(ch))
+    await asyncio.sleep(5)
+    entity = await userbot.get_entity(ch)
+    ch_id  = getattr(entity, 'id', None)
+    scan_t = f"-100{ch_id}" if ch_id else ch
+    return entity, scan_t
+
+
 async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
                                userbot_idx: int = 0):
     """
     Excel fayldan olingan kanallar ro'yxatini ketma-ket skanerleydi.
+    Qo'llab-quvvatlanadigan format:
+      @username | t.me/username | t.me/+invite_hash | t.me/joinchat/hash | -100ID
     Har kanal orasida 15 daqiqa to'xtaydi.
     Kanalda discussion guruh (kamentariya) bo'lsa — foydalanuvchilar skanerlanadi.
     """
@@ -4334,39 +4404,38 @@ async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
         tag = f"🤖 **{ub_label}** `[{i}/{total}]`\n🔗 `{ch}`"
 
         try:
-            # 1. Entity olish — avval shunchaki resolve qilishga urinish
-            entity = None
+            # 1. Kanalga kirish va entity olish
+            entity    = None
+            scan_tgt  = ch
+            joined_ok = False
+
             try:
-                entity = await userbot.get_entity(ch)
-            except Exception:
-                pass
-
-            # 2. Kerak bo'lsa qo'shilish so'rovi yuborish
-            if entity is None:
-                try:
-                    await userbot(JoinChannelRequest(ch))
-                    await asyncio.sleep(5)
-                    entity = await userbot.get_entity(ch)
+                entity, scan_tgt = await _excel_join_channel(userbot, ch)
+                joined_ok = True
+            except Exception as je:
+                err_msg = str(je)
+                if 'So\'rov yuborildi' in err_msg or 'invite' in err_msg.lower():
                     await bot.send_message(
                         admin_id,
-                        f"✅ {tag}\nQo'shilish so'rovi yuborildi — kanalga kirish kutilmoqda"
+                        f"📨 {tag}\nYopiq kanal — qo'shilish so'rovi yuborildi\n"
+                        f"Kanal ochilsa avtomatik skanerlanydi (knock tizimi orqali)"
                     )
-                except Exception as je:
+                else:
                     await bot.send_message(
                         admin_id,
-                        f"⚠️ {tag}\nKirish imkonsiz: `{type(je).__name__}` → o'tkazib yuborildi"
+                        f"⚠️ {tag}\nKirish imkonsiz: `{err_msg[:100]}` → o'tkazib yuborildi"
                     )
-                    skipped += 1
-                    if i < total:
-                        await bot.send_message(
-                            admin_id,
-                            f"⏳ **{ub_label}** | Keyingi: `{channels[i] if i < len(channels) else '—'}`\n"
-                            f"15 daqiqa kutilmoqda... ({i}/{total})"
-                        )
-                        await asyncio.sleep(15 * 60)
-                    continue
+                skipped += 1
+                if i < total:
+                    next_ch = str(channels[i]).strip() if i < len(channels) else "—"
+                    await bot.send_message(
+                        admin_id,
+                        f"⏳ **{ub_label}** | Keyingi: `{next_ch}`\n15 daqiqa... ({i}/{total})"
+                    )
+                    await asyncio.sleep(15 * 60)
+                continue
 
-            if entity is None:
+            if entity is None or not joined_ok:
                 skipped += 1
                 if i < total:
                     await asyncio.sleep(15 * 60)
@@ -4374,8 +4443,7 @@ async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
 
             ch_title = getattr(entity, 'title', ch)
 
-            # 3. Kanalda kamentariya bo'limi bormi? (scan_channel_comments ichida ham tekshiriladi,
-            #    lekin oldindan tekshirib yaxshi xabar beramiz)
+            # 2. Skanerlash — scan_channel_comments o'zi discussion guruh borligini tekshiradi
             ch_clean = re.sub(r'[^\w]', '_', ch)[:30]
             fpath    = os.path.join(
                 BASE_DIR,
@@ -4389,7 +4457,7 @@ async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
 
             try:
                 count, ch_title_r = await scan_channel_comments(
-                    userbot, ch, fpath, status_msg=None
+                    userbot, scan_tgt, fpath, status_msg=None
                 )
                 done += 1
                 txt = (
@@ -4418,7 +4486,7 @@ async def excel_batch_scanner(userbot, channels: list, bot, admin_id: int,
                 else:
                     await bot.send_message(
                         admin_id,
-                        f"❌ {tag}\nSkanerlashda xatolik: `{str(se)[:120]}`"
+                        f"❌ {tag}\nSkanerlashda xatolik: `{err_msg[:120]}`"
                     )
                     errors += 1
 
