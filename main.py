@@ -1419,6 +1419,183 @@ async def run_multi_music_search(sender_id, files, status_msg):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# EXCEL BATCH SKANERLASH — xlsx fayl yuklash + userbot tanlash
+# ─────────────────────────────────────────────────────────────────────
+
+_XLSX_MIME = (
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+)
+
+@bot.on(events.NewMessage(func=lambda e: e.document is not None))
+async def excel_upload_handler(event):
+    if not await is_admin(event.sender_id):
+        return
+    doc  = event.document
+    mime = getattr(doc, 'mime_type', '') or ''
+    if mime not in _XLSX_MIME:
+        return
+    # Fayl nomini ham tekshirish (.xlsx / .xls)
+    fname_attr = next(
+        (a for a in getattr(doc, 'attributes', []) if hasattr(a, 'file_name')),
+        None
+    )
+    fname_lower = (getattr(fname_attr, 'file_name', '') or '').lower()
+    if fname_lower and not (fname_lower.endswith('.xlsx') or fname_lower.endswith('.xls')):
+        return
+
+    tmp_path = os.path.join(BASE_DIR, f"excel_upload_{event.sender_id}.xlsx")
+    try:
+        await event.download_media(file=tmp_path)
+    except Exception as e:
+        await event.respond(f"❌ Fayl yuklab olinmadi: {e}")
+        return
+
+    # Excel o'qish — birinchi ustundagi kanallar
+    channels = []
+    _SKIP = {'channel', 'link', 'kanal', 'havola', 'url', 'username',
+              'group', 'guruh', '#', 'no', 'raqam', 'linki'}
+    try:
+        wb = openpyxl.load_workbook(tmp_path, read_only=True, data_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(values_only=True):
+            val = row[0] if row else None
+            if val is None:
+                continue
+            ch = str(val).strip()
+            if not ch or ch.lower() in _SKIP or ch.lower().startswith('none'):
+                continue
+            channels.append(ch)
+        wb.close()
+    except Exception as e:
+        await event.respond(f"❌ Excel o'qishda xatolik: {e}")
+        return
+    finally:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
+
+    if not channels:
+        await event.respond(
+            "⚠️ Excel faylda kanal linki topilmadi.\n"
+            "Birinchi ustunda kanallar ro'yxati bo'lishi kerak:\n"
+            "`A1: @channel1`\n`A2: t.me/channel2`\n..."
+        )
+        return
+
+    USER_STATES[event.sender_id] = {'state': 'excel_ub_pending', 'channels': channels}
+    ub2_ok   = userbot2 is not None
+    ub2_text = "✅ Tayyor" if ub2_ok else "❌ Ulanmagan"
+    mid      = (len(channels) + 1) // 2
+
+    btns = [
+        [Button.inline("🤖 Faqat 1-Userbot",       data="excel_ub_1")],
+        [Button.inline(
+            "🤖 Faqat 2-Userbot" if ub2_ok else "⚠️ 2-Userbot ulanmagan",
+            data="excel_ub_2" if ub2_ok else "excel_ub_none"
+        )],
+        [Button.inline("🤖🤖 Ikkalasi (parallel)", data="excel_ub_both")],
+        [Button.inline("❌ Bekor Qilish",           data="excel_ub_cancel")],
+    ]
+    await event.respond(
+        f"📋 **Excel Batch Skanerlash**\n\n"
+        f"📊 Kanallar: `{len(channels)}` ta\n"
+        f"🤖 Userbot1: `{mid}` ta | 🤖 Userbot2 ({ub2_text}): `{len(channels) - mid}` ta\n"
+        f"⏱ Har kanal orasida **15 daqiqa** pauza\n\n"
+        f"**Qaysi userbot bilan skanerlasin?**",
+        buttons=btns
+    )
+
+
+@bot.on(events.CallbackQuery(pattern=b"excel_ub_"))
+async def excel_ub_callback(event):
+    if not await is_admin(event.sender_id):
+        await event.answer("❌ Ruxsat yo'q")
+        return
+    state = USER_STATES.get(event.sender_id)
+    if not isinstance(state, dict) or state.get('state') != 'excel_ub_pending':
+        await event.answer("⚠️ Sessiya tugagan. Qayta Excel yuboring.")
+        return
+
+    action   = event.data.decode()
+    channels = state.get('channels', [])
+    USER_STATES[event.sender_id] = None
+
+    if action in ("excel_ub_cancel", "excel_ub_none") or not channels:
+        await event.answer("❌ Bekor qilindi")
+        await event.edit("❌ Excel skanerlash bekor qilindi.")
+        return
+
+    await event.answer("✅ Skanerlash boshlandi!")
+
+    if action == "excel_ub_1":
+        await event.edit(
+            f"🚀 **1-Userbot** bilan `{len(channels)}` ta kanal skanerlanmoqda...\n"
+            f"⏱ Har kanal orasida 15 daqiqa pauza.\nTugaganda xabar beraman!"
+        )
+        asyncio.create_task(
+            _run_excel_batch(event.sender_id, channels, ub_num=1)
+        )
+
+    elif action == "excel_ub_2":
+        if not userbot2:
+            await event.edit("❌ 2-Userbot ulanmagan.")
+            return
+        await event.edit(
+            f"🚀 **2-Userbot** bilan `{len(channels)}` ta kanal skanerlanmoqda...\n"
+            f"⏱ Har kanal orasida 15 daqiqa pauza.\nTugaganda xabar beraman!"
+        )
+        asyncio.create_task(
+            _run_excel_batch(event.sender_id, channels, ub_num=2)
+        )
+
+    elif action == "excel_ub_both":
+        mid   = (len(channels) + 1) // 2
+        part1 = channels[:mid]
+        part2 = channels[mid:]
+        await event.edit(
+            f"🚀 **Ikkalasi parallel** skanerlanmoqda:\n"
+            f"🤖 Userbot1: `{len(part1)}` ta kanal\n"
+            f"🤖 Userbot2: `{len(part2)}` ta kanal\n"
+            f"⏱ Har kanal orasida 15 daqiqa pauza.\nTugaganda xabar beraman!"
+        )
+        asyncio.create_task(
+            _run_excel_batch_both(event.sender_id, part1, part2)
+        )
+
+
+async def _run_excel_batch(sender_id, channels, ub_num=1):
+    ub = userbot if ub_num == 1 else userbot2
+    if ub is None:
+        await bot.send_message(sender_id, f"❌ Userbot{ub_num} ulanmagan!")
+        return
+    await engine.excel_batch_scanner(ub, channels, bot, sender_id, userbot_idx=ub_num - 1)
+
+
+async def _run_excel_batch_both(sender_id, part1, part2):
+    tasks = []
+    if part1:
+        tasks.append(engine.excel_batch_scanner(
+            userbot, part1, bot, sender_id, userbot_idx=0
+        ))
+    if part2 and userbot2:
+        tasks.append(engine.excel_batch_scanner(
+            userbot2, part2, bot, sender_id, userbot_idx=1
+        ))
+    elif part2:
+        await bot.send_message(
+            sender_id,
+            "⚠️ 2-Userbot topilmadi. Qolgan kanallar 1-Userbot bilan skanerlanadi."
+        )
+        tasks.append(engine.excel_batch_scanner(
+            userbot, part1 + part2, bot, sender_id, userbot_idx=0
+        ))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # TUGMA: KUZATILADIGAN MUSIQALAR
 # ─────────────────────────────────────────────────────────────────────
 
