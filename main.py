@@ -91,13 +91,19 @@ def _save_excel_ids(tc_ids: set, all_ids: set):
 userbot = TelegramClient(os.path.join(BASE_DIR, 'userbot_session'), API_ID, API_HASH)
 bot     = TelegramClient(os.path.join(BASE_DIR, 'bot_session'),     API_ID, API_HASH)
 
-# Ikkinchi userbot (ixtiyoriy) — .env da USERBOT2_PHONE bo'lsa ishga tushadi
+# Ikkinchi userbot (ixtiyoriy):
+#   1. .env da USERBOT2_PHONE bo'lsa — telefon bilan login
+#   2. userbot2_session fayli mavjud bo'lsa — QR login bilan (qr_login2.py dan)
+#   Ikkisi bo'lmasa — 1 userbot rejimi
 _USERBOT2_PHONE = os.getenv("USERBOT2_PHONE", "").strip()
 _USERBOT2_API_ID   = int(os.getenv("USERBOT2_API_ID",   str(os.getenv("API_ID", "0"))).strip() or "0") or int(os.getenv("API_ID"))
 _USERBOT2_API_HASH = os.getenv("USERBOT2_API_HASH", "").strip() or os.getenv("API_HASH", "").strip()
+_USERBOT2_SESSION  = os.path.join(BASE_DIR, 'userbot2_session')
+_USERBOT2_EXISTS   = os.path.exists(_USERBOT2_SESSION + '.session')
+
 userbot2 = (
-    TelegramClient(os.path.join(BASE_DIR, 'userbot2_session'), _USERBOT2_API_ID, _USERBOT2_API_HASH)
-    if _USERBOT2_PHONE else None
+    TelegramClient(_USERBOT2_SESSION, _USERBOT2_API_ID, _USERBOT2_API_HASH)
+    if (_USERBOT2_PHONE or _USERBOT2_EXISTS) else None
 )
 # extra_userbots: deep_scan_group ga beriladi, bo'sh ro'yxat = 1 userbot rejim
 _EXTRA_USERBOTS = [userbot2] if userbot2 else []
@@ -286,7 +292,7 @@ async def btn_status(event):
         f"👥 Monitoringdagi profillar: `{total}` ta\n"
         f"📥 Kutilayotgan maxfiy kanallar: `{pending}` ta\n"
         f"🔓 Kirilgan maxfiy kanallar: `{joined}` ta\n"
-        f"📨 Bugungi so\'rovnomalar: `{engine._daily_knock_count}/{engine.MAX_DAILY_KNOCKS}` ta\n"
+        f"📨 Bugungi so\'rovnomalar: `{sum(engine._daily_knock_counts.values())}/{engine.MAX_DAILY_KNOCKS * max(1, len(engine._daily_knock_counts))}` ta\n"
         f"⚡️ Skaner: **{'⏸ PAUZADA' if engine.SCANNER_PAUSED else '▶️ ISHLAMOQDA'}**"
         + queue_info +
         f"\n\n🎵 **MUSIQA SKANERLASH:**\n"
@@ -874,6 +880,14 @@ def _scan_err(e: Exception) -> str:
     return f"❌ Xatolik: {e}"
 
 
+def _md_escape(text: str) -> str:
+    if not text:
+        return text
+    for ch in ['\\', '*', '_', '`', '[', ']', '~']:
+        text = text.replace(ch, '\\' + ch)
+    return text
+
+
 async def run_keyword_search(sender_id, keyword, status_msg, days=None):
     try:
         # ── 1. Lokal keshdan qidiruv (Telegram API yo'q) ─────────────
@@ -983,23 +997,29 @@ async def run_keyword_search(sender_id, keyword, status_msg, days=None):
         chunk_num = 1
         for r in all_results:
             line = (
-                f"👤 **{r['name']}**"
-                + (f" (@{r['username']})" if r['username'] else "")
+                f"👤 **{_md_escape(r['name'])}**"
+                + (f" (@{_md_escape(r['username'])})" if r['username'] else "")
                 + f"\n🆔 `{r['user_id']}`\n"
-                f"📍 {r['source']}\n"
+                f"📍 {_md_escape(r['source'])}\n"
                 f"📅 {r['date']}\n"
-                f"💬 {r['text']}\n"
+                f"💬 {_md_escape(r['text'])}\n"
                 f"{'─' * 25}\n\n"
             )
             if len(chunk) + len(line) > 3800:
-                await bot.send_message(sender_id, chunk)
+                try:
+                    await bot.send_message(sender_id, chunk)
+                except Exception:
+                    await bot.send_message(sender_id, chunk, parse_mode=None)
                 await asyncio.sleep(0.5)
                 chunk      = f"_(davomi {chunk_num + 1})_\n\n" + line
                 chunk_num += 1
             else:
                 chunk += line
         if chunk.strip():
-            await bot.send_message(sender_id, chunk)
+            try:
+                await bot.send_message(sender_id, chunk)
+            except Exception:
+                await bot.send_message(sender_id, chunk, parse_mode=None)
 
     except Exception as e:
         await bot.send_message(sender_id, _scan_err(e))
@@ -1953,7 +1973,7 @@ async def check_knocker(event):
     lines = [
         f"🔍 **Knocker holati:**\n",
         f"📥 Pending kanallar: `{pending}` ta",
-        f"📨 Bugungi so\'rovnomalar: `{engine._daily_knock_count}/{engine.MAX_DAILY_KNOCKS}`",
+        f"📨 Bugungi so\'rovnomalar: `{sum(engine._daily_knock_counts.values())}/{engine.MAX_DAILY_KNOCKS * max(1, len(engine._daily_knock_counts))}`",
         f"⏱ Interval: `{engine.KNOCK_INTERVAL // 60}` daqiqa",
         f"⚡️ MONITORING_PAUSED: `{engine.MONITORING_PAUSED}`",
         f"\n**Namuna (5 ta):**"
@@ -2712,20 +2732,26 @@ async def run_id_search(sender_id: int, id_str: str, status_msg):
             for r in messages:
                 link_part = f"\n🔗 [O'tish]({r['link']})" if r.get('link') else ""
                 line = (
-                    f"📍 **{r['source_title']}**  📅 {r['date']}\n"
-                    f"💬 {r['text']}"
+                    f"📍 **{_md_escape(r['source_title'])}**  📅 {r['date']}\n"
+                    f"💬 {_md_escape(r['text'])}"
                     f"{link_part}\n"
                     f"{'─' * 20}\n\n"
                 )
                 if len(chunk) + len(line) > 3800:
-                    await bot.send_message(sender_id, chunk, link_preview=False)
+                    try:
+                        await bot.send_message(sender_id, chunk, link_preview=False)
+                    except Exception:
+                        await bot.send_message(sender_id, chunk, parse_mode=None, link_preview=False)
                     await asyncio.sleep(0.4)
                     chunk = f"_(davomi {chunk_num + 1})_\n\n" + line
                     chunk_num += 1
                 else:
                     chunk += line
             if chunk.strip():
-                await bot.send_message(sender_id, chunk, link_preview=False)
+                try:
+                    await bot.send_message(sender_id, chunk, link_preview=False)
+                except Exception:
+                    await bot.send_message(sender_id, chunk, parse_mode=None, link_preview=False)
 
     except Exception as e:
         await bot.send_message(sender_id, _scan_err(e))
@@ -3545,11 +3571,18 @@ async def main():
     await userbot.start()
     await bot.start(bot_token=BOT_TOKEN)
 
-    # Ikkinchi userbot — agar .env da USERBOT2_PHONE yozilgan bo'lsa
+    # Ikkinchi userbot — session fayl yoki USERBOT2_PHONE bo'lsa
     if userbot2 is not None:
         try:
-            await userbot2.start(phone=_USERBOT2_PHONE)
-            print(f"✅ Userbot2 ishga tushdi ({_USERBOT2_PHONE})")
+            if _USERBOT2_EXISTS:
+                # Session fayl mavjud (qr_login2.py dan) — telefon kerak emas
+                await userbot2.start()
+                me2 = await userbot2.get_me()
+                print(f"✅ Userbot2 session dan tushdi: {me2.first_name} (+{me2.phone})")
+            else:
+                # USERBOT2_PHONE bilan oddiy login
+                await userbot2.start(phone=_USERBOT2_PHONE)
+                print(f"✅ Userbot2 ishga tushdi ({_USERBOT2_PHONE})")
         except Exception as e:
             print(f"[OGOHLANTIRISH] Userbot2 ishga tushmadi: {e} — faqat 1 userbot bilan davom etilmoqda")
 
@@ -3561,9 +3594,9 @@ async def main():
         except Exception:
             pass
 
-    asyncio.create_task(engine.smart_channel_knocker(userbot, bot, SUPER_ADMIN_ID))
+    asyncio.create_task(engine.smart_channel_knocker(userbot, bot, SUPER_ADMIN_ID, extra_userbots=_EXTRA_USERBOTS))
     asyncio.create_task(engine.background_profile_tracker(userbot))
-    asyncio.create_task(engine.music_channel_tracker(userbot))
+    asyncio.create_task(engine.music_channel_tracker(userbot, userbot2))
     asyncio.create_task(watch_alert_sender())
     asyncio.create_task(scan_queue_runner())
     print("✅ Kiber-Stansiya OSINT Pro ishga tushdi!")
