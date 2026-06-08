@@ -2511,7 +2511,216 @@ async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
 # Kirish ochildi → musiqa skanerlash
 # ─────────────────────────────────────────────────────────────────────
 
-KNOCK_INTERVAL = 15 * 60    # 15 daqiqa (sekund)
+KNOCK_INTERVAL = 15 * 60        # 15 daqiqa
+BACKUP_SCAN_INTERVAL = 2 * 3600  # 2 soatlik zaxira skan
+
+
+async def _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_id_raw, creator_id, source_group):
+    """
+    Kanal ochildi — atomik DB yangilash + admin xabari + musiqa skaner.
+    WHERE status='pending' sharti orqali ikki marta xabar yuborilmaydi.
+    """
+    ch_name = getattr(entity, 'title', ch_id_str)
+    numeric_id_str = ""
+    if hasattr(entity, 'id') and entity.id:
+        _eid = str(entity.id).lstrip('-')
+        numeric_id_str = f"-100{_eid}" if not str(entity.id).startswith('-100') else str(entity.id)
+
+    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+        cur = await db.execute(
+            "UPDATE hidden_channel_knocker SET status='joined', numeric_id=?, channel_id=? "
+            "WHERE (channel_id=? OR channel_id=?) AND status='pending'",
+            (numeric_id_str, ch_id_str, ch_id_str, ch_id_raw)
+        )
+        if cur.rowcount == 0:
+            return  # Allaqachon 'joined' — ikkinchi xabar yubormaslik
+        if creator_id:
+            await db.execute(
+                "UPDATE users_memory_bank SET has_hidden=? WHERE user_id=?",
+                (ch_id_str, creator_id)
+            )
+        await db.commit()
+
+    await bot.send_message(
+        admin_id,
+        f"🔓 **MAXFIY KANALGA KIRISH OCHILDI!**\n\n"
+        f"📢 Kanal: `{ch_name}`\n"
+        f"🔗 Link: {ch_id_str}\n"
+        f"🆔 ID: `{numeric_id_str}`\n"
+        f"🏢 Manba: `{source_group}`\n"
+        f"🤖 Userbot{idx + 1} orqali\n\n"
+        f"🎵 Kanal musiqalari skanerlanmoqda..."
+    )
+    asyncio.create_task(
+        _scan_channel_music_after_join(ub, bot, admin_id, entity, ch_id_str)
+    )
+    print(f"[WATCHER] ✅ Kanal ochildi: {ch_name}")
+
+
+async def _get_channel_dialog_ids(ub) -> set:
+    """Userbot a'zo bo'lgan barcha kanal ID larini set qaytaradi."""
+    ids = set()
+    try:
+        async for dialog in ub.iter_dialogs(limit=500):
+            if hasattr(dialog.entity, 'id'):
+                ids.add(dialog.entity.id)
+    except Exception:
+        pass
+    return ids
+
+
+async def _match_new_channel_to_pending(ub, bot, admin_id, idx, channel_id):
+    """
+    Dialog diff orqali topilgan yangi kanal IDni pending ro'yxatidagi
+    invite link bilan moslashtiradi.
+    """
+    try:
+        entity = await ub.get_entity(channel_id)
+        if entity is None:
+            return
+
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+            async with db.execute(
+                "SELECT rowid, channel_id, creator_id, source_group "
+                "FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=?",
+                (idx,)
+            ) as cur:
+                pending = await cur.fetchall()
+
+        from telethon.tl.functions.messages import CheckChatInviteRequest as _CCIR
+        for _, ch_id_raw, creator_id, source_group in pending:
+            import urllib.parse
+            ch_id_str = urllib.parse.unquote(ch_id_raw)
+            if "/+" not in ch_id_str and "joinchat/" not in ch_id_str:
+                continue
+            hash_part = ch_id_str.split("/+")[-1].rstrip("/") if "/+" in ch_id_str else ch_id_str.split("joinchat/")[-1].rstrip("/")
+            try:
+                info = await ub(_CCIR(hash=hash_part))
+                if hasattr(info, 'chat') and info.chat.id == channel_id:
+                    await _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_id_raw, creator_id, source_group)
+                    return
+            except Exception as e:
+                if "already" in str(e).lower() or "member" in str(e).lower():
+                    # Shu link bo'lishi ehtimoli katta
+                    await _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_id_raw, creator_id, source_group)
+                    return
+            await asyncio.sleep(0.3)
+    except Exception as e:
+        print(f"[WATCHER] Moslashtirish xatosi (ch={channel_id}): {e}")
+
+
+async def _backup_full_scan(all_bots, bot, admin_id):
+    """
+    Har 2 soatdagi zaxira skan: barcha pending kanallarni
+    CheckChatInviteRequest orqali tekshiradi (2s pauza = flood yo'q).
+    """
+    print("[WATCHER] 🔍 2-soatlik zaxira skan boshlanmoqda...")
+    for idx, ub in enumerate(all_bots):
+        try:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                async with db.execute(
+                    "SELECT channel_id, creator_id, source_group "
+                    "FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=?",
+                    (idx,)
+                ) as cur:
+                    channels = await cur.fetchall()
+
+            from telethon.tl.functions.messages import CheckChatInviteRequest as _CCIR
+            for ch_id_raw, creator_id, source_group in channels:
+                if MONITORING_PAUSED:
+                    break
+                import urllib.parse
+                ch_id_str = urllib.parse.unquote(ch_id_raw)
+                joined = False
+                entity = None
+
+                try:
+                    entity = await ub.get_entity(ch_id_str)
+                    joined = True
+                except Exception:
+                    pass
+
+                if not joined and ("/+" in ch_id_str or "joinchat/" in ch_id_str):
+                    hash_part = ch_id_str.split("/+")[-1].rstrip("/") if "/+" in ch_id_str else ch_id_str.split("joinchat/")[-1].rstrip("/")
+                    try:
+                        info = await ub(_CCIR(hash=hash_part))
+                        if hasattr(info, 'chat'):
+                            joined = True
+                            entity = info.chat
+                    except Exception as e:
+                        err = str(e).lower()
+                        if "already" in err or "member" in err:
+                            joined = True
+                            try:
+                                result = await ub(ImportChatInviteRequest(hash_part))
+                                if hasattr(result, 'chats') and result.chats:
+                                    entity = result.chats[0]
+                            except Exception as e2:
+                                if "already" in str(e2).lower() or "member" in str(e2).lower():
+                                    try:
+                                        async for dialog in ub.iter_dialogs(limit=200):
+                                            un = getattr(dialog.entity, 'username', None)
+                                            if un and un in ch_id_str:
+                                                entity = dialog.entity
+                                                break
+                                    except Exception:
+                                        pass
+                                else:
+                                    joined = False
+
+                if joined and entity is not None:
+                    await _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_id_raw, creator_id, source_group)
+
+                await asyncio.sleep(2)
+
+            print(f"[WATCHER] UB{idx+1}: {len(channels)} ta kanal backup skanda tekshirildi")
+        except Exception as e:
+            print(f"[WATCHER] UB{idx+1} backup xatosi: {e}")
+
+
+async def channel_join_watcher(userbot, bot, admin_id, extra_userbots=None):
+    """
+    Ikkita qatlam bilan maxfiy kanallar ochilishini kuzatadi:
+    - Layer 1 (har 1 daqiqa): dialog diff — yangi kanal paydo bo'ldimi?
+    - Layer 2 (har 2 soat):   to'liq backup skan — CheckChatInviteRequest
+    """
+    all_bots = [userbot] + [u for u in (extra_userbots or []) if u is not None]
+
+    await asyncio.sleep(120)  # 2 daqiqa kuting
+
+    # Boshlang'ich dialog holati yodlab olinadi
+    known_ids = {}
+    for idx, ub in enumerate(all_bots):
+        known_ids[idx] = await _get_channel_dialog_ids(ub)
+        print(f"[WATCHER] UB{idx+1}: {len(known_ids[idx])} ta kanal yodlandi")
+
+    last_backup = datetime.now()
+
+    while True:
+        try:
+            await asyncio.sleep(60)
+            if MONITORING_PAUSED:
+                continue
+
+            # === Layer 1: Dialog diff ===
+            for idx, ub in enumerate(all_bots):
+                current = await _get_channel_dialog_ids(ub)
+                new_ids = current - known_ids[idx]
+                known_ids[idx] = current
+                if new_ids:
+                    print(f"[WATCHER] UB{idx+1}: {len(new_ids)} ta yangi kanal!")
+                    for cid in new_ids:
+                        asyncio.create_task(
+                            _match_new_channel_to_pending(ub, bot, admin_id, idx, cid)
+                        )
+
+            # === Layer 2: 2-soatlik backup ===
+            if (datetime.now() - last_backup).total_seconds() >= BACKUP_SCAN_INTERVAL:
+                last_backup = datetime.now()
+                asyncio.create_task(_backup_full_scan(all_bots, bot, admin_id))
+
+        except Exception as e:
+            print(f"[WATCHER] Xato: {e}")
 
 
 async def _distribute_channels(n: int):
@@ -2679,40 +2888,7 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                                     joined = False
 
                 if joined and entity is not None:
-                    ch_link = ch_id_str
-                    ch_name = getattr(entity, 'title', ch_id_str)
-                    numeric_id_str = ""
-                    if hasattr(entity, 'id') and entity.id:
-                        _eid = str(entity.id).lstrip('-')
-                        numeric_id_str = f"-100{_eid}" if not str(entity.id).startswith('-100') else str(entity.id)
-
-                    ub_label = f"Userbot{idx + 1}"
-                    await bot.send_message(
-                        admin_id,
-                        f"🔓 **MAXFIY KANALGA KIRISH OCHILDI!**\n\n"
-                        f"📢 Kanal: `{ch_name}`\n"
-                        f"🔗 Link: {ch_link}\n"
-                        f"🆔 ID: `{numeric_id_str}`\n"
-                        f"🏢 Manba: `{source_group}`\n"
-                        f"🤖 {ub_label} orqali\n\n"
-                        f"🎵 Kanal musiqalari skanerlanmoqda..."
-                    )
-
-                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-                        await db.execute(
-                            "UPDATE hidden_channel_knocker SET status='joined', numeric_id=?, channel_id=? WHERE channel_id=?",
-                            (numeric_id_str, ch_id_str, ch_id_raw)
-                        )
-                        if creator_id:
-                            await db.execute(
-                                "UPDATE users_memory_bank SET has_hidden=? WHERE user_id=?",
-                                (ch_link, creator_id)
-                            )
-                        await db.commit()
-
-                    asyncio.create_task(
-                        _scan_channel_music_after_join(ub, bot, admin_id, entity, ch_link)
-                    )
+                    await _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_id_raw, creator_id, source_group)
                     continue
 
                 # 2. So'rovnoma yuborish
