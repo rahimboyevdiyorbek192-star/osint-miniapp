@@ -2136,26 +2136,44 @@ async def test_channel_cmd(event):
 async def check_knocker(event):
     if not await is_admin(event.sender_id):
         return
+    n = max(1, len(engine._daily_knock_counts))
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending'"
         ) as cur:
             pending = (await cur.fetchone())[0]
+        per_bot = []
+        for idx in range(n):
+            async with db.execute(
+                "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=?",
+                (idx,)
+            ) as cur:
+                per_bot.append((await cur.fetchone())[0])
         async with db.execute(
-            "SELECT channel_id, last_request_time FROM hidden_channel_knocker "
-            "WHERE status='pending' LIMIT 5"
+            "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx IS NULL"
+        ) as cur:
+            unassigned = (await cur.fetchone())[0]
+        async with db.execute(
+            "SELECT channel_id, last_request_time, userbot_idx FROM hidden_channel_knocker "
+            "WHERE status='pending' ORDER BY last_request_time ASC LIMIT 5"
         ) as cur:
             samples = await cur.fetchall()
 
     lines = [
         f"🔍 **Knocker holati:**\n",
-        f"📥 Pending kanallar: `{pending}` ta",
-        f"📨 Bugungi so\'rovnomalar: `{sum(engine._daily_knock_counts.values())}/{engine.MAX_DAILY_KNOCKS * max(1, len(engine._daily_knock_counts))}`",
+        f"📥 Jami pending: `{pending}` ta",
+    ]
+    for idx in range(n):
+        cnt = engine._daily_knock_counts.get(idx, 0)
+        lines.append(f"🤖 Userbot{idx+1}: `{per_bot[idx]}` kanal | Bugun: `{cnt}/{engine.MAX_DAILY_KNOCKS}`")
+    if unassigned:
+        lines.append(f"⚠️ Tayinlanmagan: `{unassigned}` ta")
+    lines += [
         f"⏱ Interval: `{engine.KNOCK_INTERVAL // 60}` daqiqa",
         f"⚡️ MONITORING_PAUSED: `{engine.MONITORING_PAUSED}`",
-        f"\n**Namuna (5 ta):**"
+        f"\n**Navbatdagi (5 ta):**"
     ]
-    for ch_id, last_req in samples:
+    for ch_id, last_req, ub_idx in samples:
         from datetime import datetime as dt
         elapsed = "—"
         if last_req:
@@ -2164,7 +2182,8 @@ async def check_knocker(event):
                 elapsed = f"{int(diff//3600)}s {int((diff%3600)//60)}d o\'tgan"
             except:
                 elapsed = last_req
-        lines.append(f"  `{ch_id[:30]}` — {elapsed}")
+        ub_label = f"UB{ub_idx+1}" if ub_idx is not None else "?"
+        lines.append(f"  [{ub_label}] `{ch_id[:28]}` — {elapsed}")
 
     await event.respond("\n".join(lines))
 

@@ -2515,11 +2515,46 @@ MAX_DAILY_KNOCKS   = 50          # Har bir userbot uchun kuniga max
 KNOCK_INTERVAL     = 15 * 60    # 15 daqiqa (sekund)
 
 
+async def _distribute_channels(n: int):
+    """
+    userbot_idx=NULL bo'lgan pending kanallarni n ta userbotga teng taqsimlaydi.
+    Har userbot uchun hozirgi kanal soni hisoblab, kaminiga tayinlaydi.
+    """
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+            counts = [0] * n
+            async with db.execute(
+                "SELECT userbot_idx, COUNT(*) FROM hidden_channel_knocker "
+                "WHERE status='pending' AND userbot_idx IS NOT NULL GROUP BY userbot_idx"
+            ) as cur:
+                for row in await cur.fetchall():
+                    if row[0] is not None and 0 <= int(row[0]) < n:
+                        counts[int(row[0])] = row[1]
+            async with db.execute(
+                "SELECT rowid FROM hidden_channel_knocker "
+                "WHERE status='pending' AND userbot_idx IS NULL ORDER BY rowid"
+            ) as cur:
+                unassigned = [r[0] for r in await cur.fetchall()]
+            if not unassigned:
+                return
+            for rowid in unassigned:
+                min_idx = counts.index(min(counts))
+                await db.execute(
+                    "UPDATE hidden_channel_knocker SET userbot_idx=? WHERE rowid=?",
+                    (min_idx, rowid)
+                )
+                counts[min_idx] += 1
+            await db.commit()
+            print(f"[KNOCKER] {len(unassigned)} ta yangi kanal taqsimlandi: {counts}")
+    except Exception as e:
+        print(f"[KNOCKER] Taqsimlashda xato: {e}")
+
+
 async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
     """
     Har 15 daqiqada HAR USERBOT uchun:
-    1. O'z pending kanalidan biriga so'rovnoma yuboradi (har biri kuniga max 50)
-    2. Allaqachon so'rovnoma yuborilgan kanallar kirilganmi tekshiradi
+    1. Kanallar teng taqsimlangan — har userbot faqat o'zinikidan 1 tasiga so'rovnoma yuboradi
+    2. Navbat bo'yicha sikl: 140 kanalga yuborib bo'lgandan so'ng boshidan qaytadi
     3. Kirish ochildi → o'sha userbot musiqa skanerlaydi + admin ga xabar
     extra_userbots: [userbot2, ...] — qo'shimcha userbotlar
     """
@@ -2558,6 +2593,9 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
     except Exception as e:
         print(f"[KNOCKER] Count yuklashda xato: {e}")
 
+    # Barcha tayinlanmagan kanallarni taqsimlash
+    await _distribute_channels(n)
+
     await asyncio.sleep(300)
 
     while True:
@@ -2568,6 +2606,9 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
         try:
             today   = datetime.now().strftime("%Y-%m-%d")
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            # Yangi qo'shilgan kanallarni taqsimlash
+            await _distribute_channels(n)
 
             for idx, ub in enumerate(all_bots):
                 # Yangi kun — counter nolga
@@ -2591,11 +2632,11 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                 if _daily_knock_counts[idx] >= MAX_DAILY_KNOCKS:
                     continue
 
-                # Bu userbot uchun 1 ta pending kanal
+                # Bu userbot uchun navbatdagi 1 ta kanal (faqat o'zinikidan)
                 async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                     async with db.execute(
                         "SELECT channel_id, creator_id, source_group, last_request_time "
-                        "FROM hidden_channel_knocker WHERE status='pending' AND (userbot_idx=? OR userbot_idx IS NULL) "
+                        "FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=? "
                         "ORDER BY last_request_time ASC LIMIT 1",
                         (idx,)
                     ) as cur:
