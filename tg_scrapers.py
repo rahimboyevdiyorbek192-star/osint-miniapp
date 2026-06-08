@@ -2693,8 +2693,8 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                         pass
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                         await db.execute(
-                            "UPDATE hidden_channel_knocker SET last_request_time=? WHERE channel_id=?",
-                            (now_str, ch_id_str)
+                            "UPDATE hidden_channel_knocker SET last_request_time=?, userbot_idx=? WHERE channel_id=?",
+                            (now_str, idx, ch_id_str)
                         )
                         await db.commit()
 
