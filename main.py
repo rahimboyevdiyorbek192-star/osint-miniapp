@@ -2326,12 +2326,7 @@ async def _run_phishing_check(sender_id, message):
                     except Exception:
                         pass
                 return
-            else:
-                await bot.send_message(sender_id,
-                    f"⚠️ `{fname}` — faqat `.apk` va `.ogg` fayllar tahlil qilinadi.\n"
-                    "Havola yoki xabarne tekshirish uchun uni yuboring."
-                )
-                return
+            # APK/OGG emas — URL tekshirishga o'tkaziladi (quyida)
 
         # ── Havola (URL) tekshirish ───────────────────────────────────
         urls = phish_mod.extract_urls_from_telethon_msg(message)
