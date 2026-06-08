@@ -2655,9 +2655,23 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                         if "already" in err or "member" in err:
                             joined = True
                             try:
-                                entity = await ub.get_entity(ch_id_str)
-                            except Exception:
-                                joined = False
+                                result = await ub(ImportChatInviteRequest(hash_part))
+                                if hasattr(result, 'chats') and result.chats:
+                                    entity = result.chats[0]
+                            except Exception as e2:
+                                err2 = str(e2).lower()
+                                if "already" in err2 or "member" in err2:
+                                    # a'zo, lekin entity yo'q — dialoglarda qidiramiz
+                                    try:
+                                        async for dialog in ub.iter_dialogs(limit=200):
+                                            inv = getattr(dialog.entity, 'username', None)
+                                            if inv and inv in ch_id_str:
+                                                entity = dialog.entity
+                                                break
+                                    except Exception:
+                                        pass
+                                else:
+                                    joined = False
 
                 if joined and entity is not None:
                     ch_link = ch_id_str
