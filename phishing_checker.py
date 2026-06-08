@@ -109,6 +109,121 @@ def get_redirect_chain(url: str) -> list:
         pass
     return chain if chain else [url]
 
+_BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+# Fishing sahifalarda ko'p uchraydigan input nomlari
+_PHISH_INPUT_NAMES = {
+    "password", "passwd", "pass", "pwd", "pin", "parol",
+    "card", "cardnumber", "card_number", "ccnumber", "cc_num",
+    "cvv", "cvc", "cvv2", "expiry", "exp_date", "expdate",
+    "otp", "code", "sms_code", "verify_code",
+    "login", "username", "email", "phone", "mobile",
+    "account", "bank_account", "iban",
+}
+_PHISH_ACTION_WORDS = {"login", "signin", "verify", "confirm", "auth", "secure", "account", "payment"}
+_JS_REDIRECT_RE = _re.compile(
+    r'(?:window\.location|location\.href|location\.replace)\s*[=(]\s*["\']([^"\']+)["\']',
+    _re.IGNORECASE
+)
+_META_REFRESH_RE = _re.compile(
+    r'<meta[^>]+http-equiv=["\']refresh["\'][^>]+content=["\'][^;]+;\s*url=([^"\'>\s]+)',
+    _re.IGNORECASE
+)
+
+
+def browse_url(url: str) -> dict:
+    """
+    Saytga brauzer kabi kiradi, HTML tahlil qiladi.
+    Qaytaradi: {title, final_url, forms, inputs, js_redirects,
+                suspicious_keywords, page_text_snippet, error}
+    """
+    result = {
+        "title": "", "final_url": url, "forms": [],
+        "inputs": [], "js_redirects": [], "suspicious_keywords": [],
+        "page_text_snippet": "", "hidden_iframes": 0, "error": None,
+    }
+    try:
+        from bs4 import BeautifulSoup
+        sess = requests.Session()
+        sess.headers.update(_BROWSER_HEADERS)
+        resp = sess.get(url, timeout=10, allow_redirects=True)
+        result["final_url"] = resp.url
+
+        ct = resp.headers.get("Content-Type", "")
+        if "text/html" not in ct and "application/xhtml" not in ct:
+            result["error"] = f"HTML emas ({ct[:40]})"
+            return result
+
+        html = resp.text
+        soup = BeautifulSoup(html, "lxml")
+
+        # Title
+        t = soup.find("title")
+        result["title"] = t.get_text(strip=True)[:120] if t else ""
+
+        # Formalar
+        for form in soup.find_all("form"):
+            action = form.get("action", "").lower()
+            method = form.get("method", "get").upper()
+            inp_names = []
+            for inp in form.find_all(["input", "select"]):
+                nm = (inp.get("name", "") or inp.get("id", "") or "").lower()
+                tp = (inp.get("type", "text") or "text").lower()
+                if tp not in ("hidden", "submit", "button", "image", "reset"):
+                    inp_names.append(nm or tp)
+                if nm in _PHISH_INPUT_NAMES or tp == "password":
+                    result["inputs"].append(nm or tp)
+            suspicious_action = any(w in action for w in _PHISH_ACTION_WORDS)
+            result["forms"].append({
+                "action": action[:80], "method": method,
+                "fields": inp_names[:10], "suspicious": suspicious_action,
+            })
+
+        # Yashirin iframlar
+        result["hidden_iframes"] = sum(
+            1 for f in soup.find_all("iframe")
+            if "display:none" in (f.get("style", "") or "") or f.get("hidden") is not None
+        )
+
+        # JS redirect
+        for m in _JS_REDIRECT_RE.finditer(html[:50000]):
+            rurl = m.group(1)
+            if rurl.startswith("http") and rurl != resp.url:
+                result["js_redirects"].append(rurl[:120])
+
+        # Meta refresh
+        for m in _META_REFRESH_RE.finditer(html[:10000]):
+            result["js_redirects"].append(m.group(1)[:120])
+
+        # Sahifa matni (qisqa)
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        text = soup.get_text(separator=" ", strip=True)
+        result["page_text_snippet"] = text[:600]
+
+        # Shubhali kalit so'zlar
+        tl = text.lower()
+        found = []
+        for kw in ["kirish", "parol", "login", "password", "verify", "bank",
+                   "karta", "card", "cvv", "otp", "tasdiqlang", "bonus",
+                   "prize", "yutdi", "sovg'a", "bepul", "tekin", "click"]:
+            if kw in tl and kw not in found:
+                found.append(kw)
+        result["suspicious_keywords"] = found[:10]
+
+    except Exception as e:
+        result["error"] = str(e)[:100]
+    return result
+
+
 def check_ssl(domain: str) -> dict:
     try:
         ctx = ssl.create_default_context()
@@ -306,6 +421,7 @@ async def check_telegram_channel_info(bot_client, url: str) -> dict:
         return {"found": False, "username": username, "deleted": True}
 
 async def check_with_browser(url: str) -> dict:
+    # Playwright urinish
     try:
         from playwright.async_api import async_playwright
         async with async_playwright() as pw:
@@ -332,8 +448,35 @@ async def check_with_browser(url: str) -> dict:
                     "redirected": final_url.rstrip("/") != url.rstrip("/"),
                     "has_password": has_password, "has_card_input": has_card_input,
                     "has_form": has_form}
-    except ImportError:
-        return {"available": False}
+    except Exception:
+        pass
+
+    # Playwright yo'q yoki ishlamadi — requests + BeautifulSoup bilan
+    loop = asyncio.get_event_loop()
+    try:
+        data = await loop.run_in_executor(executor, browse_url, url)
+        if data.get("error"):
+            return {"available": False}
+        inputs = data.get("inputs", [])
+        forms  = data.get("forms", [])
+        has_password   = any(i in ("password", "passwd", "pass", "pwd", "pin", "parol") for i in inputs)
+        has_card_input = any(i in ("card", "cardnumber", "card_number", "ccnumber",
+                                   "cvv", "cvc", "cvv2", "pan") for i in inputs)
+        has_form       = bool(forms)
+        final_url      = data.get("final_url", url)
+        return {
+            "available":    True,
+            "final_url":    final_url,
+            "title":        data.get("title", "")[:120],
+            "redirected":   final_url.rstrip("/") != url.rstrip("/"),
+            "has_password": has_password,
+            "has_card_input": has_card_input,
+            "has_form":     has_form,
+            "js_redirects": data.get("js_redirects", []),
+            "suspicious_keywords": data.get("suspicious_keywords", []),
+            "hidden_iframes":      data.get("hidden_iframes", 0),
+            "page_snippet":        data.get("page_text_snippet", "")[:300],
+        }
     except Exception:
         return {"available": False}
 
@@ -599,6 +742,13 @@ async def analyze_url(url: str, userbot=None, bot_client=None, context_w=None) -
                 browser_w.append("🔴 Sahifada parol kiritish shakli topildi!")
             if browser.get("redirected"):
                 browser_w.append(f"🔀 Brauzer haqiqiy manzilga o'tkazdi: `{browser.get('final_url', '')[:80]}`")
+            for jr in browser.get("js_redirects", [])[:2]:
+                browser_w.append(f"⚠️ JavaScript redirect: `{jr[:80]}`")
+            if browser.get("hidden_iframes", 0) > 0:
+                browser_w.append(f"🔴 Yashirin iframe topildi ({browser['hidden_iframes']} ta) — phishing belgisi!")
+            skw = browser.get("suspicious_keywords", [])
+            if skw:
+                browser_w.append(f"⚠️ Sahifada shubhali so'zlar: `{', '.join(skw[:6])}`")
 
         all_tg_w = tg_url_w + tg_channel_w
         score, reasons = calculate_risk(
@@ -676,13 +826,21 @@ async def analyze_url(url: str, userbot=None, bot_client=None, context_w=None) -
             abuse_str = "⚪ API kalit yo'q (.env da ABUSEIPDB_API_KEY)"
 
         if browser.get("available"):
-            b_title = browser.get("title", "—")
-            b_card  = "🔴 BOR" if browser.get("has_card_input") else "🟢 Yo'q"
-            b_pass  = "🔴 BOR" if browser.get("has_password") else "🟢 Yo'q"
-            browser_block = (f"\n🌐 *Brauzer tekshiruvi:*\n"
-                             f"📄 *Sahifa nomi:* {b_title}\n"
-                             f"💳 *Karta shakli:* {b_card}\n"
-                             f"🔑 *Parol shakli:* {b_pass}\n")
+            b_title  = browser.get("title", "—") or "—"
+            b_card   = "🔴 BOR" if browser.get("has_card_input") else "🟢 Yo'q"
+            b_pass   = "🔴 BOR" if browser.get("has_password")   else "🟢 Yo'q"
+            b_form   = "🔴 BOR" if browser.get("has_form")       else "🟢 Yo'q"
+            b_iframe = f"🔴 {browser['hidden_iframes']} ta" if browser.get("hidden_iframes") else "🟢 Yo'q"
+            b_snip   = browser.get("page_snippet", "")
+            snip_str = f"\n💬 *Sahifa matni:* _{b_snip[:150]}_" if b_snip else ""
+            browser_block = (
+                f"\n🌐 *Brauzer tekshiruvi:*\n"
+                f"📄 *Sahifa nomi:* {b_title}\n"
+                f"💳 *Karta shakli:* {b_card}\n"
+                f"🔑 *Parol shakli:* {b_pass}\n"
+                f"📝 *Forma:* {b_form} · 🖼 *Yashirin iframe:* {b_iframe}"
+                f"{snip_str}\n"
+            )
         else:
             browser_block = ""
 
