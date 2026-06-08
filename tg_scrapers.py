@@ -2964,13 +2964,10 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
             if msg.text and len(msg.text) > 2:
                 s_id  = str(msg.sender_id or "")
                 s_name, s_un = "", ""
-                try:
-                    sender = await msg.get_sender()
-                    if sender and hasattr(sender, 'first_name'):
-                        s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
-                        s_un   = getattr(sender, 'username', '') or ""
-                except Exception:
-                    pass
+                sender = msg.sender  # cached — API call yo'q
+                if sender and hasattr(sender, 'first_name'):
+                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                    s_un   = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                 cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, msg.text[:500], msg_dt))
                 cache_count += 1
