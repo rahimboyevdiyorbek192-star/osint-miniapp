@@ -2912,21 +2912,65 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
 
 
 async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link):
-    """Kanal ochildi — ichidagi barcha musiqalarni skanerla."""
+    """Kanal ochildi — barcha xabarlarni keshga yoz + musiqalarni skanerla."""
     await music_mod.init_music_db()
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
     channel_id   = str(entity.id) if hasattr(entity, 'id') else str(entity)
     channel_name = getattr(entity, 'title', ch_link)
-    count = 0
+    music_count  = 0
+    cache_count  = 0
 
     try:
-        audio_msgs = []
+        audio_msgs  = []
+        cache_batch = []
+
+        # Bir o'tishda: kesh + musiqa filtri
         async for msg in userbot.iter_messages(entity, limit=None):
+            # Kesh uchun
+            if msg.text or msg.media:
+                s_id  = str(msg.sender_id or "")
+                s_name, s_un = "", ""
+                try:
+                    sender = await msg.get_sender()
+                    if sender and hasattr(sender, 'first_name'):
+                        s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                        s_un   = getattr(sender, 'username', '') or ""
+                    elif sender and hasattr(sender, 'title'):
+                        s_name = sender.title or ""
+                except Exception:
+                    pass
+                msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                txt    = (msg.text or "")[:500]
+                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, txt, msg_dt))
+                cache_count += 1
+
+                if len(cache_batch) >= 300:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
+                        await db.executemany(
+                            "INSERT OR IGNORE INTO messages_cache "
+                            "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                            "VALUES (?,?,?,?,?,?,?)",
+                            cache_batch
+                        )
+                        await db.commit()
+                    cache_batch.clear()
+
+            # Musiqa filtri
             if is_music_file(msg):
                 audio_msgs.append(msg)
 
+        # Qolgan kesh batch
+        if cache_batch:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
+                await db.executemany(
+                    "INSERT OR IGNORE INTO messages_cache "
+                    "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    cache_batch
+                )
+                await db.commit()
+
         async def _dl_join(m):
-            """3 marta urinish bilan yuklab olish"""
             tmp = os.path.join(BASE_DIR_LOCAL, f"tmp_join_{channel_id}_{m.id}.ogg")
             for attempt in range(3):
                 try:
@@ -2940,7 +2984,7 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
                         os.remove(tmp)
             return (m.id, None)
 
-        BATCH = 3  # i3/i5 uchun: 3 parallel yuklab olish
+        BATCH = 3
         for i in range(0, len(audio_msgs), BATCH):
             batch = audio_msgs[i:i+BATCH]
             dl_results = await asyncio.gather(*[_dl_join(m) for m in batch])
@@ -2953,8 +2997,7 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
                                 channel_id, channel_name,
                                 f"msg_{msg_id}", fp, dur or 0
                             )
-                            count += 1
-                            # Kuzatiladigan musiqa tekshirish
+                            music_count += 1
                             hits = await music_mod.check_against_watch_list(fp)
                             for hit in hits:
                                 _WATCH_ALERTS.put_nowait({
@@ -2973,8 +3016,9 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
 
         await bot.send_message(
             admin_id,
-            f"✅ **`{channel_name}`** musiqa skanerlash yakunlandi!\n"
-            f"🎵 Topildi: `{count}` ta fingerprint"
+            f"✅ **`{channel_name}`** skanerlash yakunlandi!\n"
+            f"💬 Keshga yozildi: `{cache_count}` ta xabar\n"
+            f"🎵 Musiqa fingerprint: `{music_count}` ta"
         )
 
     except Exception as e:
