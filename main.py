@@ -231,11 +231,21 @@ async def btn_status(event):
         return
 
     # Asosiy statistika
+    from datetime import datetime as _dt
+    today_str = _dt.now().strftime("%Y-%m-%d")
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
         total   = (await (await db.execute("SELECT COUNT(DISTINCT user_id) FROM users_memory_bank")).fetchone())[0]
         pending = (await (await db.execute("SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending'")).fetchone())[0]
         joined  = (await (await db.execute("SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='joined'")).fetchone())[0]
         running = (await (await db.execute("SELECT COUNT(*) FROM scan_resume WHERE status='running'")).fetchone())[0]
+        knock_ub1 = (await (await db.execute(
+            "SELECT COUNT(*) FROM hidden_channel_knocker WHERE userbot_idx=0 AND last_request_time LIKE ?",
+            (today_str + "%",)
+        )).fetchone())[0]
+        knock_ub2 = (await (await db.execute(
+            "SELECT COUNT(*) FROM hidden_channel_knocker WHERE userbot_idx=1 AND last_request_time LIKE ?",
+            (today_str + "%",)
+        )).fetchone())[0]
         # Barcha kanallar soni (users_memory_bank + hidden_channel_knocker joined)
         all_sources = (await (await db.execute(
             "SELECT COUNT(*) FROM ("
@@ -292,6 +302,7 @@ async def btn_status(event):
         f"👥 Monitoringdagi profillar: `{total}` ta\n"
         f"📥 Kutilayotgan maxfiy kanallar: `{pending}` ta\n"
         f"🔓 Kirilgan maxfiy kanallar: `{joined}` ta\n"
+        f"📨 Bugungi so'rovnomalar: UB1:`{knock_ub1}` | UB2:`{knock_ub2}` ta\n"
         f"⚡️ Skaner: **{'⏸ PAUZADA' if engine.SCANNER_PAUSED else '▶️ ISHLAMOQDA'}**"
         + queue_info +
         f"\n\n🎵 **MUSIQA SKANERLASH:**\n"
@@ -2163,8 +2174,18 @@ async def check_knocker(event):
         f"🔍 **Knocker holati:**\n",
         f"📥 Jami pending: `{pending}` ta",
     ]
+    from datetime import datetime as _dt2
+    today_str2 = _dt2.now().strftime("%Y-%m-%d")
+    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db2:
+        today_sends = {}
+        for idx, _ in per_bot:
+            ts = (await (await _db2.execute(
+                "SELECT COUNT(*) FROM hidden_channel_knocker WHERE userbot_idx=? AND last_request_time LIKE ?",
+                (idx, today_str2 + "%")
+            )).fetchone())[0]
+            today_sends[idx] = ts
     for idx, cnt in per_bot:
-        lines.append(f"🤖 Userbot{idx+1}: `{cnt}` kanal")
+        lines.append(f"🤖 Userbot{idx+1}: `{cnt}` kanal | Bugun: `{today_sends.get(idx,0)}` so'rovnoma")
     if unassigned:
         lines.append(f"⚠️ Tayinlanmagan: `{unassigned}` ta")
     lines += [
