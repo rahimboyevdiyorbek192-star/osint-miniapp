@@ -2169,6 +2169,35 @@ async def check_knocker(event):
     await event.respond("\n".join(lines))
 
 
+@bot.on(events.NewMessage(pattern='/test_knock'))
+async def test_knock(event):
+    if not await is_admin(event.sender_id):
+        return
+    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+        async with db.execute(
+            "SELECT channel_id FROM hidden_channel_knocker WHERE status='pending' LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        await event.respond("❌ Pending kanal yo'q")
+        return
+    ch = row[0]
+    await event.respond(f"🔄 Test: `{ch}` ga so'rovnoma yuborilmoqda...")
+    try:
+        if "/+" in ch:
+            hash_part = ch.split("/+")[-1].rstrip("/")
+        elif "joinchat/" in ch:
+            hash_part = ch.split("joinchat/")[-1].rstrip("/")
+        else:
+            await event.respond(f"❌ Format noto'g'ri: `{ch}`")
+            return
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+        result = await userbot(ImportChatInviteRequest(hash=hash_part))
+        await event.respond(f"✅ Muvaffaqiyat! Natija: `{type(result).__name__}`")
+    except Exception as e:
+        await event.respond(f"❌ Xato: `{type(e).__name__}: {e}`")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 🛡 HAVOLA TEKSHIRISH — Phishing/Scam aniqlovchi
 # ─────────────────────────────────────────────────────────────────────
