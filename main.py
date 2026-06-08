@@ -2193,9 +2193,17 @@ async def test_knock(event):
             return
         from telethon.tl.functions.messages import ImportChatInviteRequest
         result = await userbot(ImportChatInviteRequest(hash=hash_part))
-        await event.respond(f"✅ Muvaffaqiyat! Natija: `{type(result).__name__}`")
+        await event.respond(f"✅ So'rovnoma yuborildi! Natija: `{type(result).__name__}`")
     except Exception as e:
-        await event.respond(f"❌ Xato: `{type(e).__name__}: {e}`")
+        err = str(e).lower()
+        if "already" in err or "request" in err:
+            await event.respond(f"✅ So'rovnoma avval yuborilgan yoki qabul qilindi\n`{type(e).__name__}`")
+        elif "flood" in err:
+            await event.respond(f"⏳ FloodWait: `{e}`")
+        elif "expired" in err or "invalid" in err:
+            await event.respond(f"❌ Link eskirgan yoki noto'g'ri: `{type(e).__name__}`")
+        else:
+            await event.respond(f"❌ Noma'lum xato: `{type(e).__name__}: {e}`")
 
 
 # ─────────────────────────────────────────────────────────────────────
