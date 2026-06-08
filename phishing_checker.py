@@ -897,6 +897,47 @@ def _find_network_endpoints(strings: list) -> list:
     return list(endpoints)
 
 
+COMMON_APK_PASSWORDS = [
+    b"infected", b"virus", b"malware", b"password", b"1234", b"12345",
+    b"123456", b"admin", b"test", b"sample", b"apk", b"android",
+    b"0000", b"9999", b"qwerty", b"abc123", b"infected1", b"virus123",
+    b"mal", b"pack", b"crack", b"patch", b"mod", b"hack", b"evil",
+    b"trojan", b"spyware", b"ransomware", b"keylogger", b"backdoor",
+    b"pass", b"secret", b"private", b"hidden", b"secure", b"lock",
+    b"cracked", b"modded", b"cheat", b"premium", b"pro", b"vip",
+    b"", b"1", b"0", b"a", b"x", b"z",
+]
+
+
+def _find_zip_password(file_path: str) -> bytes | None:
+    """Common parollar yordamida shifrlangan ZIP ni ochishga urinadi."""
+    try:
+        zf = zipfile.ZipFile(file_path, 'r')
+        test_entry = None
+        for name in zf.namelist():
+            try:
+                info = zf.getinfo(name)
+                if info.flag_bits & 0x1:
+                    test_entry = name
+                    break
+            except Exception:
+                continue
+        if not test_entry:
+            zf.close()
+            return None
+        for pwd in COMMON_APK_PASSWORDS:
+            try:
+                zf.read(test_entry, pwd=pwd)
+                zf.close()
+                return pwd
+            except (RuntimeError, Exception):
+                continue
+        zf.close()
+    except Exception:
+        pass
+    return None
+
+
 def _apk_risk_score(permissions: list, endpoints: list, vt: dict, file_size_mb: float) -> tuple:
     score = 0
     reasons = []
@@ -937,6 +978,13 @@ def _apk_risk_score(permissions: list, endpoints: list, vt: dict, file_size_mb: 
                 break
     reasons.extend(exfil_found[:8])
 
+    # Shifrlangan APK — kuchli shubha belgisi
+    for p in permissions:
+        if "SHIFRLANGAN" in p:
+            score += 25
+            reasons.append("🔴 APK fayl shifrlangan — zararli dasturlar ko'pincha shunday qilinadi")
+            break
+
     # Fayl hajmi shubhali bo'lsa
     if file_size_mb > 50:
         score += 5
@@ -970,6 +1018,18 @@ async def analyze_apk(file_path: str) -> tuple:
             zf.close()
             return "❌ AndroidManifest.xml yoki classes.dex topilmadi — haqiqiy APK emas.", 70
 
+        # Shifrlangan ekanligini aniqlash va parol topishga urinish
+        _is_encrypted = False
+        try:
+            _mi = zf.getinfo('AndroidManifest.xml')
+            _is_encrypted = bool(_mi.flag_bits & 0x1)
+        except Exception:
+            pass
+        cracked_pwd = None
+        if _is_encrypted:
+            cracked_pwd = await loop.run_in_executor(executor, _find_zip_password, file_path)
+        _pwd = {'pwd': cracked_pwd} if cracked_pwd is not None else {}
+
         # Hash hisoblash va VirusTotal parallel
         hashes = await loop.run_in_executor(executor, _apk_hash, file_path)
         vt = await loop.run_in_executor(executor, _check_vt_hash, hashes['sha256'])
@@ -979,7 +1039,7 @@ async def analyze_apk(file_path: str) -> tuple:
         manifest_strings = []
         pkg_name = ""
         try:
-            manifest_data = zf.read('AndroidManifest.xml')
+            manifest_data = zf.read('AndroidManifest.xml', **_pwd)
             manifest_strings = await loop.run_in_executor(
                 executor, _extract_strings_from_binary, manifest_data, 4
             )
@@ -988,16 +1048,21 @@ async def analyze_apk(file_path: str) -> tuple:
                 if s.count('.') >= 2 and s.replace('.', '').replace('_', '').isalnum() and len(s) > 8:
                     pkg_name = s
                     break
+            if _is_encrypted and cracked_pwd is not None:
+                pwd_str = cracked_pwd.decode('utf-8', errors='replace') or '(bo\'sh)'
+                permissions.append(f"⚠️ SHIFRLANGAN APK — parol topildi: `{pwd_str}`")
         except RuntimeError:
-            # Fayl shifrlangan — bu o'zi shubhali belgi
-            permissions = ["⚠️ AndroidManifest.xml SHIFRLANGAN (parol himoyali)"]
+            if _is_encrypted and cracked_pwd is None:
+                permissions = ["⚠️ AndroidManifest.xml SHIFRLANGAN — parol topilmadi (kuchli shifrlash)"]
+            else:
+                permissions = ["⚠️ AndroidManifest.xml shifrlangan va ochib bo'lmadi"]
 
         # classes.dex dan URL va IP topish
         dex_names = [n for n in names if n.endswith('.dex')]
         all_dex_strings = []
         for dex_name in dex_names[:3]:
             try:
-                dex_data = zf.read(dex_name)
+                dex_data = zf.read(dex_name, **_pwd)
                 dex_strings = await loop.run_in_executor(
                     executor, _extract_strings_from_binary, dex_data, 6
                 )
@@ -1017,7 +1082,11 @@ async def analyze_apk(file_path: str) -> tuple:
         # Ruxsatlar ro'yxati
         dangerous_perms = []
         normal_perms = []
+        encrypt_warnings = []
         for p in sorted(set(permissions)):
+            if "SHIFRLANGAN" in p:
+                encrypt_warnings.append(f"  {p}")
+                continue
             info = DANGEROUS_PERMISSIONS.get(p.upper())
             if info and info[1] >= 15:
                 dangerous_perms.append(f"  {info[0]}")
@@ -1047,6 +1116,8 @@ async def analyze_apk(file_path: str) -> tuple:
             vt_str = "⚪ API kalit yo'q"
 
         perms_str = ""
+        if encrypt_warnings:
+            perms_str += "\n🔐 *Shifrlash:*\n" + "\n".join(encrypt_warnings)
         if dangerous_perms:
             perms_str += "\n🚨 *Xavfli ruxsatlar:*\n" + "\n".join(dangerous_perms[:15])
         if normal_perms:
