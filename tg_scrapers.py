@@ -2514,26 +2514,63 @@ KNOCK_INTERVAL = 15 * 60    # 15 daqiqa (sekund)
 
 async def _distribute_channels(n: int):
     """
-    userbot_idx=NULL bo'lgan pending kanallarni n ta userbotga teng taqsimlaydi.
-    Har userbot uchun hozirgi kanal soni hisoblab, kaminiga tayinlaydi.
+    Pending kanallarni n ta userbotga teng taqsimlaydi.
+    NULL kanallarni tayinlaydi VA katta nomutanosiblikni ham tuzatadi.
     """
     try:
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+            # 1. Hozirgi taqsimotni olish
             counts = [0] * n
             async with db.execute(
                 "SELECT userbot_idx, COUNT(*) FROM hidden_channel_knocker "
                 "WHERE status='pending' AND userbot_idx IS NOT NULL GROUP BY userbot_idx"
             ) as cur:
                 for row in await cur.fetchall():
-                    if row[0] is not None and 0 <= int(row[0]) < n:
-                        counts[int(row[0])] = row[1]
+                    idx = int(row[0])
+                    if 0 <= idx < n:
+                        counts[idx] = row[1]
+                    else:
+                        # Eski n dan katta indeksli kanallar → NULL ga qaytarish
+                        await db.execute(
+                            "UPDATE hidden_channel_knocker SET userbot_idx=NULL "
+                            "WHERE status='pending' AND userbot_idx=?",
+                            (row[0],)
+                        )
+
+            # 2. Nomutanosiblikni tekshirish: max-min > ideal bo'lsa rebalance
+            total = sum(counts)
+            if total > 0:
+                ideal = total // n
+                if max(counts) - min(counts) > ideal:
+                    for i in range(n):
+                        excess = counts[i] - ideal - 1
+                        if excess > 0:
+                            async with db.execute(
+                                "SELECT rowid FROM hidden_channel_knocker "
+                                "WHERE status='pending' AND userbot_idx=? "
+                                "ORDER BY last_request_time DESC LIMIT ?",
+                                (i, excess)
+                            ) as cur:
+                                to_reset = [r[0] for r in await cur.fetchall()]
+                            for rowid in to_reset:
+                                await db.execute(
+                                    "UPDATE hidden_channel_knocker SET userbot_idx=NULL WHERE rowid=?",
+                                    (rowid,)
+                                )
+                            counts[i] -= len(to_reset)
+                            print(f"[KNOCKER] Userbot{i+1}dan {len(to_reset)} ta kanal NULL ga qaytarildi (rebalance)")
+
+            # 3. NULL kanallarni tayinlash
             async with db.execute(
                 "SELECT rowid FROM hidden_channel_knocker "
                 "WHERE status='pending' AND userbot_idx IS NULL ORDER BY rowid"
             ) as cur:
                 unassigned = [r[0] for r in await cur.fetchall()]
+
             if not unassigned:
+                await db.commit()
                 return
+
             for rowid in unassigned:
                 min_idx = counts.index(min(counts))
                 await db.execute(
@@ -2541,8 +2578,9 @@ async def _distribute_channels(n: int):
                     (min_idx, rowid)
                 )
                 counts[min_idx] += 1
+
             await db.commit()
-            print(f"[KNOCKER] {len(unassigned)} ta yangi kanal taqsimlandi: {counts}")
+            print(f"[KNOCKER] {len(unassigned)} ta kanal taqsimlandi: {counts}")
     except Exception as e:
         print(f"[KNOCKER] Taqsimlashda xato: {e}")
 
