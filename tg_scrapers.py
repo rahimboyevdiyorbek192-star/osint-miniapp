@@ -2234,7 +2234,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             _ch_tasks.add(t)
             t.add_done_callback(_ch_tasks.discard)
 
-        if msg.text and len(msg.text) > 2:
+        if msg.text or msg.media:
             sender = msg.sender
             s_id   = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
             s_name = ""
@@ -2242,8 +2242,13 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             if sender and hasattr(sender, 'first_name'):
                 s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                 s_un   = getattr(sender, 'username', '') or ""
+            elif sender and hasattr(sender, 'title'):
+                s_name = sender.title or ""
             msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:500], msg_dt))
+            txt    = (msg.text or "")[:500]
+            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, txt, msg_dt))
+            if msg.id > new_last_id:
+                new_last_id = msg.id
 
         if len(_cache_batch) >= 300:
             try:
