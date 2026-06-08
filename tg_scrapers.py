@@ -2628,10 +2628,10 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                 if not row:
                     continue
 
-                ch_id_str, creator_id, source_group, last_req = row
+                ch_id_raw, creator_id, source_group, last_req = row
                 # URL-encoded linklar (%2B → +) ni decode qilish
                 import urllib.parse
-                ch_id_str = urllib.parse.unquote(ch_id_str)
+                ch_id_str = urllib.parse.unquote(ch_id_raw)
                 if MONITORING_PAUSED:
                     break
 
@@ -2700,8 +2700,8 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
 
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                         await db.execute(
-                            "UPDATE hidden_channel_knocker SET status='joined', numeric_id=? WHERE channel_id=?",
-                            (numeric_id_str, ch_id_str)
+                            "UPDATE hidden_channel_knocker SET status='joined', numeric_id=?, channel_id=? WHERE channel_id=?",
+                            (numeric_id_str, ch_id_str, ch_id_raw)
                         )
                         if creator_id:
                             await db.execute(
@@ -2720,8 +2720,8 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                 if sent:
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                         await db.execute(
-                            "UPDATE hidden_channel_knocker SET last_request_time=?, userbot_idx=? WHERE channel_id=?",
-                            (now_str, idx, ch_id_str)
+                            "UPDATE hidden_channel_knocker SET last_request_time=?, userbot_idx=?, channel_id=? WHERE channel_id=?",
+                            (now_str, idx, ch_id_str, ch_id_raw)
                         )
                         await db.commit()
 
