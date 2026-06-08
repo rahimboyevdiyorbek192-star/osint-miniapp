@@ -975,28 +975,35 @@ async def analyze_apk(file_path: str) -> tuple:
         vt = await loop.run_in_executor(executor, _check_vt_hash, hashes['sha256'])
 
         # AndroidManifest.xml dan ruxsatlarni ajratish
-        manifest_data = zf.read('AndroidManifest.xml')
-        manifest_strings = await loop.run_in_executor(
-            executor, _extract_strings_from_binary, manifest_data, 4
-        )
-        permissions = _find_permissions(manifest_strings)
-
-        # Paket nomi
+        permissions = []
+        manifest_strings = []
         pkg_name = ""
-        for s in manifest_strings:
-            if s.count('.') >= 2 and s.replace('.', '').replace('_', '').isalnum() and len(s) > 8:
-                pkg_name = s
-                break
+        try:
+            manifest_data = zf.read('AndroidManifest.xml')
+            manifest_strings = await loop.run_in_executor(
+                executor, _extract_strings_from_binary, manifest_data, 4
+            )
+            permissions = _find_permissions(manifest_strings)
+            for s in manifest_strings:
+                if s.count('.') >= 2 and s.replace('.', '').replace('_', '').isalnum() and len(s) > 8:
+                    pkg_name = s
+                    break
+        except RuntimeError:
+            # Fayl shifrlangan — bu o'zi shubhali belgi
+            permissions = ["⚠️ AndroidManifest.xml SHIFRLANGAN (parol himoyali)"]
 
         # classes.dex dan URL va IP topish
         dex_names = [n for n in names if n.endswith('.dex')]
         all_dex_strings = []
-        for dex_name in dex_names[:3]:  # Faqat birinchi 3 ta DEX
-            dex_data = zf.read(dex_name)
-            dex_strings = await loop.run_in_executor(
-                executor, _extract_strings_from_binary, dex_data, 6
-            )
-            all_dex_strings.extend(dex_strings)
+        for dex_name in dex_names[:3]:
+            try:
+                dex_data = zf.read(dex_name)
+                dex_strings = await loop.run_in_executor(
+                    executor, _extract_strings_from_binary, dex_data, 6
+                )
+                all_dex_strings.extend(dex_strings)
+            except RuntimeError:
+                pass  # Shifrlangan DEX — o'tkazib yuborish
 
         zf.close()
 
