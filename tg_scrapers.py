@@ -2460,10 +2460,44 @@ async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
             channel_id   = str(entity.id)
             channel_name = getattr(entity, 'title', channel_link)
 
-            audio_msgs = []
+            audio_msgs  = []
+            _usr_cache  = []
+            _usr_src    = channel_link
             async for msg in userbot.iter_messages(entity, limit=None):
                 if is_music_file(msg):
                     audio_msgs.append(msg)
+                if msg.text and len(msg.text) > 2:
+                    _s = msg.sender
+                    _sid = getattr(_s, 'id', msg.sender_id or 0) if _s else (msg.sender_id or 0)
+                    _sname, _sun = "", ""
+                    if _s and hasattr(_s, 'first_name'):
+                        _sname = (((_s.first_name or "") + " " + (_s.last_name or "")).strip())
+                        _sun   = getattr(_s, 'username', '') or ""
+                    _dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                    _usr_cache.append((msg.id, _usr_src, _sid, _sname, _sun, msg.text[:500], _dt))
+                    if len(_usr_cache) >= 300:
+                        try:
+                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                                await _db.executemany(
+                                    "INSERT OR IGNORE INTO messages_cache "
+                                    "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                                    "VALUES (?,?,?,?,?,?,?)", _usr_cache
+                                )
+                                await _db.commit()
+                        except Exception:
+                            pass
+                        _usr_cache = []
+            if _usr_cache:
+                try:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                        await _db.executemany(
+                            "INSERT OR IGNORE INTO messages_cache "
+                            "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                            "VALUES (?,?,?,?,?,?,?)", _usr_cache
+                        )
+                        await _db.commit()
+                except Exception:
+                    pass
 
             async def _dl2(m):
                 tmp = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
