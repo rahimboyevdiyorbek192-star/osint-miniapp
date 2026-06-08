@@ -2716,7 +2716,9 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                     continue
 
                 # 2. So'rovnoma yuborish
+                print(f"[KNOCKER] UB{idx+1} urinmoqda: {ch_id_str[:50]}")
                 sent = await send_join_request(ub, ch_id_str)
+                print(f"[KNOCKER] UB{idx+1} natija: sent={sent}")
                 if sent:
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                         await db.execute(
@@ -2724,6 +2726,7 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                             (now_str, idx, ch_id_str, ch_id_raw)
                         )
                         await db.commit()
+                    print(f"[KNOCKER] UB{idx+1} DB yangilandi ✓")
 
         except Exception as e:
             if 'FloodWait' in str(type(e).__name__):
