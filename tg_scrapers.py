@@ -2234,7 +2234,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             _ch_tasks.add(t)
             t.add_done_callback(_ch_tasks.discard)
 
-        if msg.text or msg.media:
+        if msg.text and len(msg.text) > 2:
             sender = msg.sender
             s_id   = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
             s_name = ""
@@ -2242,13 +2242,8 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             if sender and hasattr(sender, 'first_name'):
                 s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                 s_un   = getattr(sender, 'username', '') or ""
-            elif sender and hasattr(sender, 'title'):
-                s_name = sender.title or ""
             msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-            txt    = (msg.text or "")[:500]
-            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, txt, msg_dt))
-            if msg.id > new_last_id:
-                new_last_id = msg.id
+            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:500], msg_dt))
 
         if len(_cache_batch) >= 300:
             try:
@@ -2931,8 +2926,8 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
 
         # Bir o'tishda: kesh + musiqa filtri
         async for msg in userbot.iter_messages(entity, limit=None):
-            # Kesh uchun
-            if msg.text or msg.media:
+            # Kesh uchun — faqat matnli xabarlar
+            if msg.text and len(msg.text) > 2:
                 s_id  = str(msg.sender_id or "")
                 s_name, s_un = "", ""
                 try:
@@ -2940,13 +2935,10 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
                     if sender and hasattr(sender, 'first_name'):
                         s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                         s_un   = getattr(sender, 'username', '') or ""
-                    elif sender and hasattr(sender, 'title'):
-                        s_name = sender.title or ""
                 except Exception:
                     pass
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                txt    = (msg.text or "")[:500]
-                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, txt, msg_dt))
+                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, msg.text[:500], msg_dt))
                 cache_count += 1
 
                 if len(cache_batch) >= 300:
