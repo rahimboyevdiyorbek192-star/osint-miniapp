@@ -302,6 +302,8 @@ async def send_join_request(userbot, invite_link):
     t.me/+XXXX yoki t.me/joinchat/XXXX invite link orqali
     kanalga qo'shilish so'rovnomasi yuboradi.
     """
+    import urllib.parse
+    invite_link = urllib.parse.unquote(invite_link)
     try:
         if "/+" in invite_link:
             hash_part = invite_link.split("/+")[-1].rstrip("/")
@@ -2627,6 +2629,9 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                     continue
 
                 ch_id_str, creator_id, source_group, last_req = row
+                # URL-encoded linklar (%2B → +) ni decode qilish
+                import urllib.parse
+                ch_id_str = urllib.parse.unquote(ch_id_str)
                 if MONITORING_PAUSED:
                     break
 
