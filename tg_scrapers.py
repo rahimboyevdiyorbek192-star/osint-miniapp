@@ -2509,10 +2509,7 @@ async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
 # Kirish ochildi → musiqa skanerlash
 # ─────────────────────────────────────────────────────────────────────
 
-_daily_knock_counts: dict = {}   # {userbot_idx: count}
-_daily_knock_dates:  dict = {}   # {userbot_idx: date_str}
-MAX_DAILY_KNOCKS   = 50          # Har bir userbot uchun kuniga max
-KNOCK_INTERVAL     = 15 * 60    # 15 daqiqa (sekund)
+KNOCK_INTERVAL = 15 * 60    # 15 daqiqa (sekund)
 
 
 async def _distribute_channels(n: int):
@@ -2558,40 +2555,8 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
     3. Kirish ochildi → o'sha userbot musiqa skanerlaydi + admin ga xabar
     extra_userbots: [userbot2, ...] — qo'shimcha userbotlar
     """
-    global _daily_knock_counts, _daily_knock_dates
-
     all_bots = [userbot] + [u for u in (extra_userbots or []) if u is not None]
     n = len(all_bots)
-
-    for idx in range(n):
-        _daily_knock_counts[idx] = 0
-        _daily_knock_dates[idx]  = ""
-
-    today = datetime.now().strftime("%Y-%m-%d")
-    try:
-        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-            await db.execute(
-                "CREATE TABLE IF NOT EXISTS knock_state "
-                "(key TEXT PRIMARY KEY, value TEXT)"
-            )
-            await db.commit()
-            for idx in range(n):
-                async with db.execute(
-                    "SELECT value FROM knock_state WHERE key=?", (f"knock_date_{idx}",)
-                ) as cur:
-                    row = await cur.fetchone()
-                if row and row[0] == today:
-                    async with db.execute(
-                        "SELECT value FROM knock_state WHERE key=?", (f"knock_count_{idx}",)
-                    ) as cur:
-                        cnt = await cur.fetchone()
-                    if cnt:
-                        _daily_knock_counts[idx] = int(cnt[0])
-                        _daily_knock_dates[idx]  = today
-        total = sum(_daily_knock_counts.values())
-        print(f"[KNOCKER] Bugungi count yuklandi: {total}/{MAX_DAILY_KNOCKS * n} ({n} userbot, har biri max {MAX_DAILY_KNOCKS})")
-    except Exception as e:
-        print(f"[KNOCKER] Count yuklashda xato: {e}")
 
     # Barcha tayinlanmagan kanallarni taqsimlash
     await _distribute_channels(n)
@@ -2604,34 +2569,12 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
             continue
 
         try:
-            today   = datetime.now().strftime("%Y-%m-%d")
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
 
             # Yangi qo'shilgan kanallarni taqsimlash
             await _distribute_channels(n)
 
             for idx, ub in enumerate(all_bots):
-                # Yangi kun — counter nolga
-                if _daily_knock_dates.get(idx, "") != today:
-                    _daily_knock_dates[idx]  = today
-                    _daily_knock_counts[idx] = 0
-                    try:
-                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
-                            await db.execute(
-                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                (f"knock_date_{idx}", today)
-                            )
-                            await db.execute(
-                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                (f"knock_count_{idx}", "0")
-                            )
-                            await db.commit()
-                    except Exception:
-                        pass
-
-                if _daily_knock_counts[idx] >= MAX_DAILY_KNOCKS:
-                    continue
-
                 # Bu userbot uchun navbatdagi 1 ta kanal (faqat o'zinikidan)
                 async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                     async with db.execute(
@@ -2718,20 +2661,6 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                 # 2. So'rovnoma yuborish
                 sent = await send_join_request(ub, ch_id_str)
                 if sent:
-                    _daily_knock_counts[idx] += 1
-                    try:
-                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
-                            await db.execute(
-                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                (f"knock_date_{idx}", today)
-                            )
-                            await db.execute(
-                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                (f"knock_count_{idx}", str(_daily_knock_counts[idx]))
-                            )
-                            await db.commit()
-                    except Exception:
-                        pass
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                         await db.execute(
                             "UPDATE hidden_channel_knocker SET last_request_time=?, userbot_idx=? WHERE channel_id=?",

@@ -292,7 +292,6 @@ async def btn_status(event):
         f"👥 Monitoringdagi profillar: `{total}` ta\n"
         f"📥 Kutilayotgan maxfiy kanallar: `{pending}` ta\n"
         f"🔓 Kirilgan maxfiy kanallar: `{joined}` ta\n"
-        f"📨 Bugungi so\'rovnomalar: `{sum(engine._daily_knock_counts.values())}/{engine.MAX_DAILY_KNOCKS * max(1, len(engine._daily_knock_counts))}` ta\n"
         f"⚡️ Skaner: **{'⏸ PAUZADA' if engine.SCANNER_PAUSED else '▶️ ISHLAMOQDA'}**"
         + queue_info +
         f"\n\n🎵 **MUSIQA SKANERLASH:**\n"
@@ -2136,23 +2135,24 @@ async def test_channel_cmd(event):
 async def check_knocker(event):
     if not await is_admin(event.sender_id):
         return
-    n = max(1, len(engine._daily_knock_counts))
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
         async with db.execute(
             "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending'"
         ) as cur:
             pending = (await cur.fetchone())[0]
-        per_bot = []
-        for idx in range(n):
-            async with db.execute(
-                "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=?",
-                (idx,)
-            ) as cur:
-                per_bot.append((await cur.fetchone())[0])
         async with db.execute(
             "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx IS NULL"
         ) as cur:
             unassigned = (await cur.fetchone())[0]
+        per_bot = []
+        for idx in range(4):
+            async with db.execute(
+                "SELECT COUNT(*) FROM hidden_channel_knocker WHERE status='pending' AND userbot_idx=?",
+                (idx,)
+            ) as cur:
+                cnt = (await cur.fetchone())[0]
+                if cnt > 0:
+                    per_bot.append((idx, cnt))
         async with db.execute(
             "SELECT channel_id, last_request_time, userbot_idx FROM hidden_channel_knocker "
             "WHERE status='pending' ORDER BY last_request_time ASC LIMIT 5"
@@ -2163,9 +2163,8 @@ async def check_knocker(event):
         f"🔍 **Knocker holati:**\n",
         f"📥 Jami pending: `{pending}` ta",
     ]
-    for idx in range(n):
-        cnt = engine._daily_knock_counts.get(idx, 0)
-        lines.append(f"🤖 Userbot{idx+1}: `{per_bot[idx]}` kanal | Bugun: `{cnt}/{engine.MAX_DAILY_KNOCKS}`")
+    for idx, cnt in per_bot:
+        lines.append(f"🤖 Userbot{idx+1}: `{cnt}` kanal")
     if unassigned:
         lines.append(f"⚠️ Tayinlanmagan: `{unassigned}` ta")
     lines += [
