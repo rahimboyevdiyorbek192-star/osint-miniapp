@@ -1287,9 +1287,8 @@ async def background_profile_tracker(userbot):
                             for inv_link in invite_links:
                                 await db.execute(
                                     "INSERT OR IGNORE INTO hidden_channel_knocker "
-                                    "(channel_id, creator_id, source_group, last_request_time) "
-                                    "VALUES (?, ?, ?, ?)",
-                                    (inv_link, uid, "Monitoring", now_str)
+                                    "(channel_id, creator_id, source_group) VALUES (?, ?, ?)",
+                                    (inv_link, uid, "Monitoring")
                                 )
                             await db.commit()
                     elif getattr(fi.full_user, 'personal_channel_id', None):
@@ -2676,37 +2675,28 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                     continue
 
                 # 2. So'rovnoma yuborish
-                last_dt = None
-                try:
-                    last_dt = datetime.strptime(last_req, "%Y-%m-%d %H:%M")
-                except Exception:
-                    pass
-
-                elapsed = (datetime.now() - last_dt).total_seconds() if last_dt else 99999
-
-                if elapsed >= 86400:
-                    sent = await send_join_request(ub, ch_id_str)
-                    if sent:
-                        _daily_knock_counts[idx] += 1
-                        try:
-                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
-                                await db.execute(
-                                    "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                    (f"knock_date_{idx}", today)
-                                )
-                                await db.execute(
-                                    "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
-                                    (f"knock_count_{idx}", str(_daily_knock_counts[idx]))
-                                )
-                                await db.commit()
-                        except Exception:
-                            pass
-                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                sent = await send_join_request(ub, ch_id_str)
+                if sent:
+                    _daily_knock_counts[idx] += 1
+                    try:
+                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
                             await db.execute(
-                                "UPDATE hidden_channel_knocker SET last_request_time=? WHERE channel_id=?",
-                                (now_str, ch_id_str)
+                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
+                                (f"knock_date_{idx}", today)
+                            )
+                            await db.execute(
+                                "INSERT OR REPLACE INTO knock_state (key, value) VALUES (?, ?)",
+                                (f"knock_count_{idx}", str(_daily_knock_counts[idx]))
                             )
                             await db.commit()
+                    except Exception:
+                        pass
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                        await db.execute(
+                            "UPDATE hidden_channel_knocker SET last_request_time=? WHERE channel_id=?",
+                            (now_str, ch_id_str)
+                        )
+                        await db.commit()
 
         except Exception as e:
             if 'FloodWait' in str(type(e).__name__):
