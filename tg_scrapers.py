@@ -2294,6 +2294,32 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     await asyncio.sleep(random.uniform(0.5, 1.5))
 
 
+async def _get_joined_channels_by_userbot() -> tuple:
+    """
+    hidden_channel_knocker.status='joined' kanallarni userbot_idx ga qarab ajratadi.
+    Returns (ub1_channels, ub2_channels) — har biri list of identifiers.
+    """
+    ub1, ub2 = [], []
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+            async with db.execute(
+                "SELECT channel_id, numeric_id, userbot_idx "
+                "FROM hidden_channel_knocker WHERE status='joined'"
+            ) as cur:
+                rows = await cur.fetchall()
+        for ch_id, numeric_id, ub_idx in rows:
+            identifier = numeric_id if numeric_id else urllib.parse.unquote(ch_id or "")
+            if not identifier:
+                continue
+            if ub_idx == 1:
+                ub2.append(identifier)
+            else:
+                ub1.append(identifier)
+    except Exception as e:
+        print(f"[ROUTING] joined channels xato: {e}")
+    return ub1, ub2
+
+
 async def _music_process_list(userbot, sources, userbot_idx=0):
     """Kanallar ro'yxatini bitta userbot bilan ketma-ket skanerlaydi."""
     for source in sources:
@@ -2335,20 +2361,23 @@ async def music_channel_tracker(userbot, userbot2=None):
                     except Exception as e:
                         print(f"Kanal xatosi ({source}): {e}")
             else:
-                # Allaqachon qo'shilgan maxfiy → doim userbot1 (u a'zo)
-                # Ochiq kanallar → 50/50, yangi invite link topilsa o'sha userbot knockerga yozadi
-                already_private = [s for s in sources if _is_private_source(str(s))]
-                public          = [s for s in sources if not _is_private_source(str(s))]
+                # Har userbot faqat o'zi kirgan maxfiy kanallarni + ochiqning o'z yarmi
+                ub1_private, ub2_private = await _get_joined_channels_by_userbot()
+                all_private_ids = set(ub1_private + ub2_private)
+                public = [s for s in sources
+                          if not _is_private_source(str(s))
+                          and str(s) not in all_private_ids]
 
                 mid  = (len(public) + 1) // 2
                 pub1 = public[:mid]
                 pub2 = public[mid:]
 
-                print(f"[MUSIQA] Maxfiy(ub1): {len(already_private)}, Ochiq ub1: {len(pub1)}, Ochiq ub2: {len(pub2)}")
+                print(f"[MUSIQA] UB1: {len(ub1_private)} maxfiy + {len(pub1)} ochiq | "
+                      f"UB2: {len(ub2_private)} maxfiy + {len(pub2)} ochiq")
 
                 await asyncio.gather(
-                    _music_process_list(userbot,  already_private + pub1, userbot_idx=0),
-                    _music_process_list(userbot2, pub2,                   userbot_idx=1),
+                    _music_process_list(userbot,  ub1_private + pub1, userbot_idx=0),
+                    _music_process_list(userbot2, ub2_private + pub2, userbot_idx=1),
                     return_exceptions=True
                 )
 
