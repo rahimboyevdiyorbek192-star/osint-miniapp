@@ -2295,30 +2295,68 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     if MONITORING_PAUSED:
         return
 
-    await asyncio.sleep(1)
-    try:
-        entity = await safe_get_entity(userbot, source)
-        if entity is None:
-            return
-    except Exception:
-        try:
-            is_invite = "t.me/+" in str(source) or "t.me/joinchat/" in str(source)
-            if is_invite:
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-                    await db.execute(
-                        "INSERT OR IGNORE INTO hidden_channel_knocker "
-                        "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
-                        "VALUES (?, 0, 'Musiqa Tracker', ?, ?)",
-                        (source, now_str, userbot_idx)
-                    )
-                    await db.commit()
-        except Exception:
-            pass
-        return
+    await asyncio.sleep(0.5)
 
-    channel_name = getattr(entity, 'title', str(source))
-    channel_id   = str(entity.id)
+    # ── Keshdan entity ID ni olish (get_entity chaqirmaslik uchun) ──────
+    src_str = str(source).strip()
+    entity = None
+    channel_name = src_str
+
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+            async with _db.execute(
+                "SELECT numeric_id FROM resolved_channel_ids WHERE channel_link=?",
+                (src_str,)
+            ) as _cur:
+                _row = await _cur.fetchone()
+        if _row and _row[0]:
+            try:
+                entity = await userbot.get_entity(int(_row[0]))
+                channel_name = getattr(entity, 'title', src_str)
+            except Exception:
+                entity = None
+    except Exception:
+        pass
+
+    # Keshda yo'q — API orqali olish va keshga yozish
+    if entity is None:
+        try:
+            entity = await safe_get_entity(userbot, source)
+            if entity is None:
+                return
+            # Keshga saqlash
+            channel_name = getattr(entity, 'title', src_str)
+            numeric_id = str(entity.id) if hasattr(entity, 'id') else ""
+            if numeric_id:
+                now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
+                try:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                        await _db.execute(
+                            "INSERT OR REPLACE INTO resolved_channel_ids "
+                            "(channel_link, numeric_id, resolved_at) VALUES (?,?,?)",
+                            (src_str, numeric_id, now_s)
+                        )
+                        await _db.commit()
+                except Exception:
+                    pass
+        except Exception:
+            try:
+                is_invite = "t.me/+" in src_str or "t.me/joinchat/" in src_str
+                if is_invite:
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                        await db.execute(
+                            "INSERT OR IGNORE INTO hidden_channel_knocker "
+                            "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
+                            "VALUES (?, 0, 'Musiqa Tracker', ?, ?)",
+                            (source, now_str, userbot_idx)
+                        )
+                        await db.commit()
+            except Exception:
+                pass
+            return
+
+    channel_id = str(entity.id)
 
     last_msg_id = 0
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
