@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Kiber-Stansiya OSINT Pro — Admin Qo'llanma PDF generator (v2)"""
+"""Telegram Monitoring Bot — Admin Qo'llanma PDF generator (v2)"""
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -222,7 +222,7 @@ def on_page(canvas, doc):
     canvas.saveState()
     canvas.setFont(FONT, 8)
     canvas.setFillColor(colors.HexColor("#757575"))
-    canvas.drawString(ML, 0.7*cm, "KIBER-STANSIYA OSINT PRO")
+    canvas.drawString(ML, 0.7*cm, "TELEGRAM MONITORING BOT")
     canvas.drawRightString(W - MR, 0.7*cm, "Admin Qo'llanmasi")
     canvas.setStrokeColor(GRAY_MED)
     canvas.setLineWidth(0.5)
@@ -239,8 +239,8 @@ def build_story():
 
     # ── MUQOVA ──────────────────────────────────────────────────────────
     story += [sp(60),
-        Paragraph("KIBER-STANSIYA", ps("cov1", bold=True, size=32, color=BLUE_DARK, align="CENTER")),
-        Paragraph("OSINT PRO", ps("cov2", bold=True, size=32, color=BLUE_DARK, align="CENTER")),
+        Paragraph("TELEGRAM MONITORING", ps("cov1", bold=True, size=32, color=BLUE_DARK, align="CENTER")),
+        Paragraph("BOT", ps("cov2", bold=True, size=32, color=BLUE_DARK, align="CENTER")),
         sp(4),
         HRFlowable(width="70%", thickness=3, color=BLUE_DARK, spaceAfter=16),
         Paragraph("ADMIN QO'LLANMASI", ps("cov3", bold=True, size=15, align="CENTER")),
@@ -322,7 +322,7 @@ def build_story():
     # ════ 1. UMUMIY MA'LUMOT ════════════════════════════════════════════
     story += [section_header(1, "UMUMIY MA'LUMOT", "Bot nima va qanday ishlaydi"), sp(10)]
     story.append(Paragraph(
-        "Kiber-Stansiya OSINT Pro — Telegram guruh va kanallaridan ma'lumot yig'ish, "
+        "Telegram Monitoring Bot — guruh va kanallaridan ma'lumot yig'ish, "
         "firibgarlar va bank kartasi bilan bog'liq shaxslarni tergov qilish uchun mo'ljallangan "
         "maxsus razvedka tizimidir.", S_BODY))
     story.append(sp(6))
@@ -881,7 +881,7 @@ def build_story():
     # Yakuniy
     story += [
         HRFlowable(width="100%", thickness=1.5, color=BLUE_DARK, spaceAfter=10),
-        Paragraph("KIBER-STANSIYA OSINT PRO", ps("fin", bold=True, size=12, color=BLUE_DARK, align="CENTER")),
+        Paragraph("TELEGRAM MONITORING BOT", ps("fin", bold=True, size=12, color=BLUE_DARK, align="CENTER")),
         Paragraph("Ushbu hujjat maxfiy. Faqat ruxsat etilgan adminlar bilan ulashing.",
                   ps("fins", size=9, color=colors.HexColor("#757575"), align="CENTER")),
     ]
@@ -891,7 +891,7 @@ def build_story():
 # ════════════════════════════════════════════════════════════════════════
 # GENERATE
 # ════════════════════════════════════════════════════════════════════════
-OUT = os.path.join(BASE, "Kiber_Stansiya_Qollanma_v2.pdf")
+OUT = os.path.join(BASE, "Telegram_Monitoring_Bot_Qollanma_v2.pdf")
 doc = SimpleDocTemplate(
     OUT, pagesize=A4,
     leftMargin=ML, rightMargin=MR,
