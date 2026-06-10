@@ -2395,6 +2395,18 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     _ch_tasks = set()
 
     async def _pipeline(m):
+        # Kanal ID + xabar ID bo'yicha allaqachon saqlangan bo'lsa — yuklamasdan o'tkazib yuborish
+        try:
+            async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
+                async with _mdb.execute(
+                    "SELECT 1 FROM music_fingerprints WHERE channel_id=? AND file_name=?",
+                    (channel_id, f"msg_{m.id}")
+                ) as _mc:
+                    if await _mc.fetchone():
+                        return
+        except Exception:
+            pass
+
         tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
         async with _ch_sem:
             ok = False
@@ -2734,6 +2746,18 @@ async def music_channel_tracker(userbot, userbot2=None):
 
 async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: str):
     """Bitta yangi audio faylni yuklab fingerprint oladi (real vaqt)."""
+    # Allaqachon saqlangan bo'lsa — o'tkazib yuborish
+    try:
+        async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
+            async with _mdb.execute(
+                "SELECT 1 FROM music_fingerprints WHERE channel_id=? AND file_name=?",
+                (channel_id, f"msg_{msg.id}")
+            ) as _mc:
+                if await _mc.fetchone():
+                    return
+    except Exception:
+        pass
+
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
     tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_rt_{channel_id}_{msg.id}.ogg")
     try:
