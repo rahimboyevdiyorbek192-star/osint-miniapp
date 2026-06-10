@@ -2295,7 +2295,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     if MONITORING_PAUSED:
         return
 
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(2)
 
     # ── Keshdan entity ID ni olish (get_entity chaqirmaslik uchun) ──────
     src_str = str(source).strip()
@@ -2378,9 +2378,12 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     new_last_id = last_msg_id
     audio_count = [0]
 
-    iter_kwargs = {"limit": None}
     if last_msg_id > 0:
-        iter_kwargs["min_id"] = last_msg_id
+        # Faqat yangi xabarlar (oxirgi ID dan keyin)
+        iter_kwargs = {"limit": None, "min_id": last_msg_id}
+    else:
+        # Birinchi skan: faqat oxirgi 50 ta xabar (flood oldini olish)
+        iter_kwargs = {"limit": 50}
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
     CONCURRENCY = 3
@@ -2498,7 +2501,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         except Exception as e:
             print(f"Progress saqlash xatosi: {e}")
 
-    await asyncio.sleep(random.uniform(0.5, 1.5))
+    await asyncio.sleep(random.uniform(1.5, 3.0))
 
 
 async def _get_joined_channels_by_userbot() -> tuple:
