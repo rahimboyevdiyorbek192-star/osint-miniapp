@@ -2560,8 +2560,32 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
     """Kanallar ro'yxatini bitta userbot bilan ketma-ket skanerlaydi."""
     label = f"UB{userbot_idx+1}"
     _ub_key = id(userbot)
+    cursor_key = f"cursor_{label}"
+
+    # Bot o'chib-yongan bo'lsa — qayerda to'xtaganini o'qi
+    start_from = 0
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+            async with _db.execute(
+                "SELECT value FROM music_scan_state WHERE key=?", (cursor_key,)
+            ) as _cur:
+                _row = await _cur.fetchone()
+            if _row:
+                start_from = int(_row[0])
+    except Exception:
+        start_from = 0
+
+    if start_from >= len(sources):
+        start_from = 0  # Yangi tsikl boshlandi
+
+    if start_from > 0:
+        print(f"[MUSIQA-{label}] Davom etilmoqda: {start_from}/{len(sources)} kanaldan")
 
     for i, source in enumerate(sources):
+        # Avvalgi to'xtash joyigacha o'tkazib yubor
+        if i < start_from:
+            continue
+
         # Event loop ga har 5 kanalda bir marta nafs berish
         if i % 5 == 0:
             await asyncio.sleep(0)
@@ -2584,6 +2608,25 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
         except Exception as e:
             print(f"[MUSIQA-{label}] Kanal xatosi ({source}): {e}")
             await asyncio.sleep(3)
+
+        # Har kanal tugagach cursor ni saqlash
+        try:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                await _db.execute(
+                    "INSERT OR REPLACE INTO music_scan_state (key, value) VALUES (?,?)",
+                    (cursor_key, str(i + 1))
+                )
+                await _db.commit()
+        except Exception:
+            pass
+
+    # Tsikl tugadi — cursori tozalash (keyingi tsikl yangidan boshlansin)
+    try:
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+            await _db.execute("DELETE FROM music_scan_state WHERE key=?", (cursor_key,))
+            await _db.commit()
+    except Exception:
+        pass
 
 
 async def music_channel_tracker(userbot, userbot2=None):

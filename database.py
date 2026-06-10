@@ -221,6 +221,14 @@ async def init_db():
             )
         """)
 
+        # Musiqa skaneri cursor jadvali (bot o'chsa-yonsa davom etish uchun)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS music_scan_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
         try:
             await db.execute("PRAGMA wal_checkpoint(FULL)")
         except Exception:
