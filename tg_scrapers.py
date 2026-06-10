@@ -728,7 +728,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                             s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                             s_un   = getattr(sender, 'username', '') or ""
                         msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                        _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                        _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
 
                     # Har 1000 xabarda batch-insert
                     if len(_cache_batch) >= 1000:
@@ -1406,7 +1406,7 @@ async def _read_msg_chunk(ub, entity, add_offset: int, limit: int,
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                local_cache.append((msg.id, src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                local_cache.append((msg.id, src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
                 if len(local_cache) >= 300:
                     try:
                         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -1513,7 +1513,7 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                         s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                         s_un = getattr(sender, 'username', '') or ""
                     msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                    _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                    _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
                     if len(_cache_batch) >= 300:
                         try:
                             async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -1858,7 +1858,7 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                 _cache_batch.append((
                     msg.id, _src_str, msg.sender_id,
-                    s_name, s_un, msg.text[:500], msg_dt
+                    s_name, s_un, msg.text[:2000], msg_dt
                 ))
 
             # Har 300 xabarda batch-insert
@@ -2124,7 +2124,7 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un = getattr(sender, 'username', '') or ""
                 msg_dt_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt_str))
+                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt_str))
                 if len(_cache_batch) >= 300:
                     try:
                         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -2395,7 +2395,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
                 s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                 s_un   = getattr(sender, 'username', '') or ""
             msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:500], msg_dt))
+            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:2000], msg_dt))
 
         if len(_cache_batch) >= 300:
             try:
@@ -2688,7 +2688,7 @@ async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
                         _sname = (((_s.first_name or "") + " " + (_s.last_name or "")).strip())
                         _sun   = getattr(_s, 'username', '') or ""
                     _dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                    _usr_cache.append((msg.id, _usr_src, _sid, _sname, _sun, msg.text[:500], _dt))
+                    _usr_cache.append((msg.id, _usr_src, _sid, _sname, _sun, msg.text[:2000], _dt))
                     if len(_usr_cache) >= 300:
                         try:
                             async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -3183,7 +3183,7 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un   = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, msg.text[:2000], msg_dt))
                 cache_count += 1
 
                 if len(cache_batch) >= 300:
@@ -3390,41 +3390,57 @@ async def sync_source_messages(userbot, source: str, limit_days: int = 90):
 
 async def search_keywords_local(keyword_str: str, days: int = None):
     """
-    Lokal messages_cache dan kalit so'z qidiradi.
+    Lokal messages_cache dan kalit so'z qidiradi (FTS5 → LIKE fallback).
     Telegram API ga murojaat qilmaydi.
     Qaytaradi: natijalar ro'yxati [{name, username, user_id, date, text, source, matched}]
     """
     import database as db_mod
-    from datetime import timezone, timedelta
+    from datetime import timedelta
 
     keywords = [k.strip().lower() for k in keyword_str.split(',') if k.strip()]
     if not keywords:
         return []
 
-    # SQL LIKE shartlari
-    like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
-    like_params  = [f"%{kw}%" for kw in keywords]
-
     date_clause = ""
-    date_param  = []
+    date_param: list = []
     if days:
-        cutoff = (datetime.now() - __import__('datetime').timedelta(days=days)).strftime("%Y-%m-%d")
-        date_clause = "AND msg_date >= ?"
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        date_clause = "AND m.msg_date >= ?"
         date_param  = [cutoff]
-
-    query = f"""
-        SELECT sender_id, sender_name, sender_username, text, msg_date, source
-        FROM messages_cache
-        WHERE ({like_clauses})
-        {date_clause}
-        ORDER BY msg_date DESC
-        LIMIT 500
-    """
 
     results = []
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-        async with db.execute(query, like_params + date_param) as cur:
-            rows = await cur.fetchall()
+        rows = []
+        # FTS5 orqali tez qidiruv
+        try:
+            fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
+            fts_query = f"""
+                SELECT m.sender_id, m.sender_name, m.sender_username,
+                       m.text, m.msg_date, m.source
+                FROM messages_fts f
+                JOIN messages_cache m ON m.id = f.rowid
+                WHERE messages_fts MATCH ?
+                {date_clause}
+                ORDER BY m.msg_date DESC
+                LIMIT 500
+            """
+            async with db.execute(fts_query, [fts_terms] + date_param) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            # FTS5 jadval yo'q yoki xato — LIKE bilan zaxira qidiruv
+            like_clauses = " OR ".join(["LOWER(m.text) LIKE ?" for _ in keywords])
+            like_params  = [f"%{kw}%" for kw in keywords]
+            like_query = f"""
+                SELECT sender_id, sender_name, sender_username,
+                       text, msg_date, source
+                FROM messages_cache m
+                WHERE ({like_clauses})
+                {date_clause}
+                ORDER BY msg_date DESC
+                LIMIT 500
+            """
+            async with db.execute(like_query, like_params + date_param) as cur:
+                rows = await cur.fetchall()
 
     for (s_id, s_name, s_un, text, msg_date, source) in rows:
         search_text = (text or "").lower()
@@ -3432,8 +3448,8 @@ async def search_keywords_local(keyword_str: str, days: int = None):
         if not matched:
             continue
         display = text or ""
-        if len(display) > 250:
-            display = display[:247] + "..."
+        if len(display) > 300:
+            display = display[:297] + "..."
         results.append({
             'name':     s_name or "",
             'username': s_un   or "",
