@@ -2384,7 +2384,8 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     new_last_id = last_msg_id
     audio_count = [0]
 
-    iter_kwargs = {"limit": None}
+    # reverse=True: eskidan yangi tomonga — svet o'chsa ham davom etish mumkin
+    iter_kwargs = {"limit": None, "reverse": True}
     if last_msg_id > 0:
         iter_kwargs["min_id"] = last_msg_id
 
@@ -2442,13 +2443,14 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
 
     async for msg in userbot.iter_messages(entity, **iter_kwargs):
         _msg_counter += 1
+        # reverse=True: ID lar doim o'sib boradi
+        new_last_id = msg.id
+
         # Har 100 xabardan keyin 2s kutish — flood oldini olish
         if _msg_counter % 100 == 0:
             await asyncio.sleep(2)
 
         if is_music_file(msg):
-            if msg.id > new_last_id:
-                new_last_id = msg.id
             t = asyncio.create_task(_pipeline(msg))
             _ch_tasks.add(t)
             t.add_done_callback(_ch_tasks.discard)
@@ -2477,6 +2479,20 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             except Exception:
                 pass
             _cache_batch = []
+
+        # Har 500 xabardan keyin progress ni darhol bazaga yoz
+        # (svet o'chsa ham davom etish uchun)
+        if _msg_counter % 500 == 0:
+            try:
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                    await _db.execute(
+                        "INSERT OR REPLACE INTO music_channel_progress "
+                        "(channel_id, last_msg_id) VALUES (?,?)",
+                        (channel_id, new_last_id)
+                    )
+                    await _db.commit()
+            except Exception:
+                pass
 
     if _cache_batch:
         try:
