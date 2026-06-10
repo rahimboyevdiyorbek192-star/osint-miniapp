@@ -1081,7 +1081,8 @@ async def run_comment_scan(sender_id, target, fpath, status_msg):
 
 async def run_msg_scan(sender_id, target, fpath, status_msg):
     try:
-        count = await engine.scan_messages(userbot, target, fpath, status_msg)
+        count = await engine.scan_messages(userbot, target, fpath, status_msg,
+                                            extra_userbot=userbot2)
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
             await db.execute(
                 "INSERT INTO archive_bin (file_name, file_path, created_date) VALUES (?, ?, ?)",

@@ -1376,8 +1376,72 @@ async def background_profile_tracker(userbot, ub_idx: int = 0, n_userbots: int =
 # A'zo bo'lmasa ham ochiq guruhda ishlaydi
 # ─────────────────────────────────────────────────────────────────────
 
+_SCAN_CHUNK = 2000   # har userbot bir tsiklda o'qiydigan xabar soni
+
+
+async def _read_msg_chunk(ub, entity, add_offset: int, limit: int,
+                          unique_users: dict, unique_ids: set,
+                          src_str: str, offset_date=None) -> int:
+    """add_offset dan boshlab limit ta xabar o'qiydi, foydalanuvchilarni yig'adi."""
+    count = 0
+    local_cache = []
+    try:
+        async for msg in ub.iter_messages(entity, limit=limit,
+                                          add_offset=add_offset,
+                                          offset_date=offset_date):
+            if msg.sender_id and msg.sender_id > 0:
+                sender = msg.sender
+                if sender and not getattr(sender, 'bot', False) and hasattr(sender, 'first_name'):
+                    if msg.sender_id not in unique_users:
+                        unique_users[msg.sender_id] = sender
+                else:
+                    unique_ids.add(msg.sender_id)
+
+            if msg.text and len(msg.text) > 2:
+                sender = msg.sender
+                s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+                s_name, s_un = "", ""
+                if sender and hasattr(sender, 'first_name'):
+                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                    s_un = getattr(sender, 'username', '') or ""
+                msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                local_cache.append((msg.id, src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                if len(local_cache) >= 300:
+                    try:
+                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                            await _db.executemany(
+                                "INSERT OR IGNORE INTO messages_cache "
+                                "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                                "VALUES (?,?,?,?,?,?,?)", local_cache
+                            )
+                            await _db.commit()
+                        asyncio.create_task(_check_batch_alerts(local_cache))
+                    except Exception:
+                        pass
+                    local_cache.clear()
+
+            count += 1
+    except Exception as e:
+        print(f"[SCAN-CHUNK] offset={add_offset} xato: {e}")
+    finally:
+        if local_cache:
+            try:
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                    await _db.executemany(
+                        "INSERT OR IGNORE INTO messages_cache "
+                        "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                        "VALUES (?,?,?,?,?,?,?)", local_cache
+                    )
+                    await _db.commit()
+                asyncio.create_task(_check_batch_alerts(local_cache))
+            except Exception:
+                pass
+    return count
+
+
 async def scan_messages(userbot, target, output_path, status_msg, days=None,
-                        resume_offset=0, resume_count=0, scan_id=None):
+                        resume_offset=0, resume_count=0, scan_id=None,
+                        extra_userbot=None):
     """
     Guruh/kanal xabarlarini o'qib, yozgan foydalanuvchilarni skanerLaydi.
     """
@@ -1427,71 +1491,76 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
         # Xabarlardan foydalanuvchilarni yig'ish + keshga saqlash
         unique_ids = set()
         msg_count_tmp = 0
-        _cache_batch = []   # Kesh uchun batch
         _src_str = str(target)
 
-        async for msg in userbot.iter_messages(entity, limit=None, offset_date=offset_date):
-            if msg.sender_id and msg.sender_id > 0:
-                sender = msg.sender
-                if sender and not getattr(sender, 'bot', False) and hasattr(sender, 'first_name'):
-                    if msg.sender_id not in unique_users:
-                        unique_users[msg.sender_id] = sender
-                else:
-                    unique_ids.add(msg.sender_id)
-
-            # Matnli xabarlarni keshga yig'ish (batch)
-            if msg.text and len(msg.text) > 2:
-                sender = msg.sender
-                s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
-                s_name = ""
-                s_un   = ""
-                if sender and hasattr(sender, 'first_name'):
-                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
-                    s_un   = getattr(sender, 'username', '') or ""
-                msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
-
-            # Har 300 xabarda bir marta batch-insert
-            if len(_cache_batch) >= 300:
-                try:
-                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                        await _db.executemany(
-                            "INSERT OR IGNORE INTO messages_cache "
-                            "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
-                            "VALUES (?,?,?,?,?,?,?)",
-                            _cache_batch
+        if extra_userbot is None:
+            # Bitta userbot — oddiy rejim
+            async for msg in userbot.iter_messages(entity, limit=None, offset_date=offset_date):
+                if msg.sender_id and msg.sender_id > 0:
+                    sender = msg.sender
+                    if sender and not getattr(sender, 'bot', False) and hasattr(sender, 'first_name'):
+                        if msg.sender_id not in unique_users:
+                            unique_users[msg.sender_id] = sender
+                    else:
+                        unique_ids.add(msg.sender_id)
+                if msg.text and len(msg.text) > 2:
+                    sender = msg.sender
+                    s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+                    s_name, s_un = "", ""
+                    if sender and hasattr(sender, 'first_name'):
+                        s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                        s_un = getattr(sender, 'username', '') or ""
+                    msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                    _cb = (msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt)
+                    msg_count_tmp += 1
+                if msg_count_tmp % 1000 == 0 and msg_count_tmp > 0:
+                    try:
+                        await status_msg.edit(
+                            f"📨 `{msg_count_tmp}` ta xabar o'qildi | "
+                            f"👥 `{len(unique_users) + len(unique_ids)}` ta unikal..."
                         )
-                        await _db.commit()
-                    # Alert tekshiruvi (fon taskda)
-                    asyncio.create_task(_check_batch_alerts(_cache_batch))
+                    except Exception:
+                        pass
+        else:
+            # Ikki userbot — 2000 tadan navbatma-navbat, parallel
+            # UB1: chunk 0 (0-1999), chunk 2 (4000-5999), ...
+            # UB2: chunk 1 (2000-3999), chunk 3 (6000-7999), ...
+            entity2 = entity
+            try:
+                try:
+                    entity2 = await extra_userbot.get_entity(target)
                 except Exception:
-                    pass
-                _cache_batch = []
+                    await extra_userbot(JoinChannelRequest(target))
+                    await asyncio.sleep(1)
+                    entity2 = await extra_userbot.get_entity(target)
+            except Exception:
+                pass  # UB2 kira olmasa UB1 davom etadi
 
-            msg_count_tmp += 1
-            if msg_count_tmp % 1000 == 0:
+            pair = 0
+            while True:
+                off1 = pair * _SCAN_CHUNK * 2
+                off2 = off1 + _SCAN_CHUNK
+                c1, c2 = await asyncio.gather(
+                    _read_msg_chunk(userbot,       entity,  off1, _SCAN_CHUNK,
+                                    unique_users, unique_ids, _src_str, offset_date),
+                    _read_msg_chunk(extra_userbot, entity2, off2, _SCAN_CHUNK,
+                                    unique_users, unique_ids, _src_str, offset_date),
+                    return_exceptions=True
+                )
+                c1 = c1 if isinstance(c1, int) else 0
+                c2 = c2 if isinstance(c2, int) else 0
+                msg_count_tmp += c1 + c2
                 try:
                     await status_msg.edit(
-                        f"📨 `{msg_count_tmp}` ta xabar o'qildi | "
+                        f"📨 `{msg_count_tmp}` ta xabar o'qildi (UB1+UB2) | "
                         f"👥 `{len(unique_users) + len(unique_ids)}` ta unikal..."
                     )
                 except Exception:
                     pass
-
-        # Qolgan batch ni saqlash
-        if _cache_batch:
-            try:
-                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                    await _db.executemany(
-                        "INSERT OR IGNORE INTO messages_cache "
-                        "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
-                        "VALUES (?,?,?,?,?,?,?)",
-                        _cache_batch
-                    )
-                    await _db.commit()
-                asyncio.create_task(_check_batch_alerts(_cache_batch))
-            except Exception:
-                pass
+                # Ikkalasi ham to'liq chunk o'qimagan → xabarlar tugadi
+                if c1 < _SCAN_CHUNK and c2 < _SCAN_CHUNK:
+                    break
+                pair += 1
 
         # Sender None bo'lganlarni get_entity bilan olish
         missing = unique_ids - set(unique_users.keys())
