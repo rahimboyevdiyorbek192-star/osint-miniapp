@@ -289,8 +289,9 @@ async def safe_get_entity(userbot, target):
             return await userbot.get_entity(target)
         except FloodWaitError as e:
             log_flood("safe_get_entity", e.seconds)
-            # Uzoq flood bo'lsa — o'tkazib yuborish (kutmaslik)
+            # Katta flood — darhol qaytish, lekin birozgina dam berish
             if e.seconds > 120:
+                await asyncio.sleep(2)  # event loop ga nafs berish
                 return None
             await asyncio.sleep(e.seconds + 2)
         except Exception:
@@ -2497,17 +2498,43 @@ def _source_numeric_id(source: str) -> str:
 
 async def _music_process_list(userbot, sources, userbot_idx=0):
     """Kanallar ro'yxatini bitta userbot bilan ketma-ket skanerlaydi."""
-    for source in sources:
+    import time as _time
+    fast_count  = 0    # 2s dan tez tugagan kanallar (flood belgi)
+    label = f"UB{userbot_idx+1}"
+
+    for i, source in enumerate(sources):
+        # Event loop ga har 5 kanalda bir marta nafs berish
+        if i % 5 == 0:
+            await asyncio.sleep(0)
+
+        t0 = _time.monotonic()
         try:
             await _music_process_one_source(userbot, source, userbot_idx)
         except FloodWaitError as e:
             wait = e.seconds
             log_flood("music_channel_tracker", wait)
-            print(f"[MUSIQA] FloodWait {wait}s. Kutilmoqda...")
+            print(f"[MUSIQA-{label}] FloodWait {wait}s. Kutilmoqda...")
             await asyncio.sleep(min(wait, 3600))
+            fast_count = 0
+            continue
         except Exception as e:
-            print(f"Kanal xatosi ({source}): {e}")
-            await asyncio.sleep(5)
+            print(f"[MUSIQA-{label}] Kanal xatosi ({source}): {e}")
+            await asyncio.sleep(3)
+            continue
+
+        elapsed = _time.monotonic() - t0
+
+        # Kanal 2 soniyadan tez tugatilsa — flood sababli entity None qaytgan
+        if elapsed < 2.0:
+            fast_count += 1
+        else:
+            fast_count = 0
+
+        # 10 ketma-ket tez tugatilsa → flood storm → 20 daqiqa pauza
+        if fast_count >= 10:
+            print(f"[MUSIQA-{label}] Flood storm aniqlandi — 20 daqiqa pauza...")
+            await asyncio.sleep(1200)
+            fast_count = 0
 
 
 async def music_channel_tracker(userbot, userbot2=None):
