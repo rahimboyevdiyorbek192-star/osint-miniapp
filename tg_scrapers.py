@@ -2378,12 +2378,9 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     new_last_id = last_msg_id
     audio_count = [0]
 
+    iter_kwargs = {"limit": None}
     if last_msg_id > 0:
-        # Faqat yangi xabarlar (oxirgi ID dan keyin)
-        iter_kwargs = {"limit": None, "min_id": last_msg_id}
-    else:
-        # Birinchi skan: faqat oxirgi 50 ta xabar (flood oldini olish)
-        iter_kwargs = {"limit": 50}
+        iter_kwargs["min_id"] = last_msg_id
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
     CONCURRENCY = 3
@@ -2435,8 +2432,14 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
 
     _cache_batch = []
     _cache_src   = str(source)
+    _msg_counter = 0
 
     async for msg in userbot.iter_messages(entity, **iter_kwargs):
+        _msg_counter += 1
+        # Har 100 xabardan keyin 2s kutish — flood oldini olish
+        if _msg_counter % 100 == 0:
+            await asyncio.sleep(2)
+
         if is_music_file(msg):
             if msg.id > new_last_id:
                 new_last_id = msg.id
