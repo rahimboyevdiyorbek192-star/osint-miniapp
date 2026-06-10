@@ -2446,9 +2446,9 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         # reverse=True: ID lar doim o'sib boradi
         new_last_id = msg.id
 
-        # Har 100 xabardan keyin 2s kutish — flood oldini olish
+        # Har 100 xabardan keyin 1s kutish — flood oldini olish
         if _msg_counter % 100 == 0:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
         if is_music_file(msg):
             t = asyncio.create_task(_pipeline(msg))
@@ -2728,24 +2728,125 @@ async def music_channel_tracker(userbot, userbot2=None):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# REAL VAQT HANDLER — userbot a'zo kanallarga yangi xabar kelsa
+# API chaqiruvsiz, Telegram o'zi yuboradi
+# ─────────────────────────────────────────────────────────────────────
+
+async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: str):
+    """Bitta yangi audio faylni yuklab fingerprint oladi (real vaqt)."""
+    BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
+    tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_rt_{channel_id}_{msg.id}.ogg")
+    try:
+        await msg.download_media(file=tmp_path)
+        if not (os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0):
+            return
+        fp, duration = await music_mod.get_fingerprint_async(tmp_path)
+        if fp:
+            await music_mod.save_fingerprint(
+                channel_id, channel_name, f"msg_{msg.id}", fp, duration or 0
+            )
+            hits = await music_mod.check_against_watch_list(fp)
+            for hit in hits:
+                _WATCH_ALERTS.put_nowait({
+                    'admin_id':    hit['admin_id'],
+                    'watch_name':  hit['watch_name'],
+                    'score':       hit['score'],
+                    'source_name': channel_name,
+                    'source_id':   channel_id,
+                    'source_type': 'realtime'
+                })
+    except Exception:
+        pass
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+
+async def _cache_realtime_message(msg, src_str: str):
+    """Yangi matn xabarni messages_cache ga yozadi (real vaqt)."""
+    if not (msg.text and len(msg.text) > 2):
+        return
+    try:
+        sender = msg.sender
+        s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+        s_name, s_un = "", ""
+        if sender and hasattr(sender, 'first_name'):
+            s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+            s_un = getattr(sender, 'username', '') or ""
+        msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO messages_cache "
+                "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (msg.id, src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt)
+            )
+            await db.commit()
+    except Exception:
+        pass
+
+
+def setup_realtime_handlers(userbot, userbot2=None):
+    """
+    Userbotlarga real vaqt xabar handlerlarini ulaydi.
+    Userbot a'zo kanallardan yangi xabar kelganda:
+      - audio/mpeg yoki audio/mp4 → darhol yukla+fingerprint (API yo'q)
+      - matn → messages_cache ga yoz
+    """
+    from telethon import events as _events
+
+    @userbot.on(_events.NewMessage)
+    async def _ub1_handler(event):
+        try:
+            msg = event.message
+            chat = await event.get_chat()
+            chat_id = str(abs(event.chat_id or 0))
+            chat_name = getattr(chat, 'title', chat_id)
+            src_str = str(event.chat_id or chat_id)
+
+            if is_music_file(msg):
+                asyncio.create_task(
+                    _process_realtime_audio(userbot, msg, chat_id, chat_name)
+                )
+            await _cache_realtime_message(msg, src_str)
+        except Exception:
+            pass
+
+    if userbot2:
+        @userbot2.on(_events.NewMessage)
+        async def _ub2_handler(event):
+            try:
+                msg = event.message
+                chat = await event.get_chat()
+                chat_id = str(abs(event.chat_id or 0))
+                chat_name = getattr(chat, 'title', chat_id)
+                src_str = str(event.chat_id or chat_id)
+
+                if is_music_file(msg):
+                    asyncio.create_task(
+                        _process_realtime_audio(userbot2, msg, chat_id, chat_name)
+                    )
+                await _cache_realtime_message(msg, src_str)
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────
 # PARALLEL MUSIQA SKANERLASH — har a'zo uchun
 # ─────────────────────────────────────────────────────────────────────
 
 def is_music_file(msg):
-    """Musiqa fayllarini tekshiradi (voice xabarlar emas)"""
+    """Faqat audio/mpeg va audio/mp4 formatlarini qabul qiladi"""
     if msg.voice:
-        return False  # Voice xabar — o'tkazib yuborish
+        return False
     if msg.audio:
-        mime = getattr(msg.audio, 'mime_type', '') or ''
-        mime = mime.lower()
-        # Mime bo'sh bo'lsa ham audio bo'lsa olish
+        mime = (getattr(msg.audio, 'mime_type', '') or '').lower().strip()
         if not mime:
-            return True
-        # Voice/video formatlarini o'tkazib yuborish
-        skip = ['video/', 'image/', 'application/']
-        if any(s in mime for s in skip):
             return False
-        return True  # Barcha audio formatlarini olish
+        return mime in ('audio/mpeg', 'audio/mp4')
     return False
 
 async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):

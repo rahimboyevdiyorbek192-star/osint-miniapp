@@ -3890,6 +3890,8 @@ async def main():
     asyncio.create_task(engine.music_channel_tracker(userbot, userbot2))
     asyncio.create_task(watch_alert_sender())
     asyncio.create_task(scan_queue_runner())
+    # Real vaqt handler: a'zo kanallarda yangi xabar → API chaqiruvsiz
+    engine.setup_realtime_handlers(userbot, userbot2)
     print("✅ Kiber-Stansiya OSINT Pro ishga tushdi!")
     await bot.run_until_disconnected()
 
