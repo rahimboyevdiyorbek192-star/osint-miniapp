@@ -43,6 +43,7 @@ _FLOOD_PENALTY = 0.0   # qo'shimcha uyqu (soniyalarda), flood kelsa oshadi
 # Userbot flood tracker: {id(userbot): unix_timestamp_until_flood_expires}
 import time as _time_mod
 _UB_FLOOD_UNTIL: dict = {}
+_PROCESSING_AUDIO: set = set()  # (channel_id, msg_id) — ikki userbot bir musiqani yuklamasligi uchun
 
 def _record_flood(seconds: float):
     """Flood kelganda penalty oshirish — keyingi so'rovlar sekinlashadi."""
@@ -2746,17 +2747,24 @@ async def music_channel_tracker(userbot, userbot2=None):
 
 async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: str):
     """Bitta yangi audio faylni yuklab fingerprint oladi (real vaqt)."""
-    # Allaqachon saqlangan bo'lsa — o'tkazib yuborish
+    # Ikki userbot bir kanalda bo'lsa — faqat bittasi ishlaydi
+    _key = (channel_id, str(msg.id))
+    if _key in _PROCESSING_AUDIO:
+        return
+    _PROCESSING_AUDIO.add(_key)
+
     try:
-        async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
-            async with _mdb.execute(
-                "SELECT 1 FROM music_fingerprints WHERE channel_id=? AND file_name=?",
-                (channel_id, f"msg_{msg.id}")
-            ) as _mc:
-                if await _mc.fetchone():
-                    return
-    except Exception:
-        pass
+        # Bazada allaqachon saqlangan bo'lsa — o'tkazib yuborish
+        try:
+            async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
+                async with _mdb.execute(
+                    "SELECT 1 FROM music_fingerprints WHERE channel_id=? AND file_name=?",
+                    (channel_id, f"msg_{msg.id}")
+                ) as _mc:
+                    if await _mc.fetchone():
+                        return
+        except Exception:
+            pass
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
     tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_rt_{channel_id}_{msg.id}.ogg")
@@ -2787,6 +2795,7 @@ async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: s
                 os.remove(tmp_path)
             except Exception:
                 pass
+        _PROCESSING_AUDIO.discard(_key)
 
 
 async def _cache_realtime_message(msg, src_str: str):
