@@ -227,6 +227,34 @@ async def init_db():
             pass
         await db.commit()
 
+    # FTS5 indeks bo'sh bo'lsa — background rebuild (bir martalik)
+    import asyncio
+    asyncio.create_task(_fts_rebuild_if_needed())
+
+
+async def _fts_rebuild_if_needed():
+    """FTS5 indexi bo'sh bo'lsa mavjud messages_cache dan bir martalik rebuild."""
+    import asyncio
+    await asyncio.sleep(5)  # DB to'liq ochilsin
+    try:
+        async with aiosqlite.connect(DB_NAME, timeout=120) as db:
+            # FTS5 da yozuv bormi?
+            async with db.execute("SELECT rowid FROM messages_fts LIMIT 1") as cur:
+                fts_row = await cur.fetchone()
+            if fts_row is not None:
+                return  # Allaqachon to'ldirilgan
+            # messages_cache da ma'lumot bormi?
+            async with db.execute("SELECT COUNT(*) FROM messages_cache") as cur:
+                mc_count = (await cur.fetchone())[0]
+            if mc_count == 0:
+                return
+            print(f"[FTS5] {mc_count:,} ta xabar indekslanmoqda...")
+            await db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+            await db.commit()
+            print(f"[FTS5] Indeks tayyor ({mc_count:,} ta xabar).")
+    except Exception as e:
+        print(f"[FTS5] Rebuild xatosi: {e}")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # ADMIN

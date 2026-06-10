@@ -3411,6 +3411,7 @@ async def search_keywords_local(keyword_str: str, days: int = None):
     results = []
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
         rows = []
+        fts_ok = False
         # FTS5 orqali tez qidiruv
         try:
             fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
@@ -3426,14 +3427,18 @@ async def search_keywords_local(keyword_str: str, days: int = None):
             """
             async with db.execute(fts_query, [fts_terms] + date_param) as cur:
                 rows = await cur.fetchall()
+            fts_ok = True
         except Exception:
-            # FTS5 jadval yo'q yoki xato — LIKE bilan zaxira qidiruv
-            like_clauses = " OR ".join(["LOWER(m.text) LIKE ?" for _ in keywords])
+            pass
+
+        # FTS5 natija yo'q (xato yoki index hali to'ldirilmagan) — LIKE fallback
+        if not rows:
+            like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
             like_params  = [f"%{kw}%" for kw in keywords]
             like_query = f"""
                 SELECT sender_id, sender_name, sender_username,
                        text, msg_date, source
-                FROM messages_cache m
+                FROM messages_cache
                 WHERE ({like_clauses})
                 {date_clause}
                 ORDER BY msg_date DESC
@@ -3441,6 +3446,7 @@ async def search_keywords_local(keyword_str: str, days: int = None):
             """
             async with db.execute(like_query, like_params + date_param) as cur:
                 rows = await cur.fetchall()
+            _ = fts_ok  # suppress unused warning
 
     for (s_id, s_name, s_un, text, msg_date, source) in rows:
         search_text = (text or "").lower()
