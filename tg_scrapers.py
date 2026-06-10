@@ -2313,9 +2313,10 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
 async def _get_joined_channels_by_userbot() -> tuple:
     """
     hidden_channel_knocker.status='joined' kanallarni userbot_idx ga qarab ajratadi.
-    Returns (ub1_channels, ub2_channels) — har biri list of identifiers.
+    Returns (ub1_channels, ub2_channels, ub1_numeric_ids, ub2_numeric_ids)
     """
     ub1, ub2 = [], []
+    ub1_ids, ub2_ids = set(), set()
     try:
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
             async with db.execute(
@@ -2324,16 +2325,38 @@ async def _get_joined_channels_by_userbot() -> tuple:
             ) as cur:
                 rows = await cur.fetchall()
         for ch_id, numeric_id, ub_idx in rows:
-            identifier = numeric_id if numeric_id else urllib.parse.unquote(ch_id or "")
+            ch = urllib.parse.unquote(ch_id or "")
+            num = str(numeric_id or "").strip()
+            identifier = num if num else ch
             if not identifier:
                 continue
             if ub_idx == 1:
                 ub2.append(identifier)
+                if num:
+                    ub2_ids.add(num)
             else:
                 ub1.append(identifier)
+                if num:
+                    ub1_ids.add(num)
     except Exception as e:
         print(f"[ROUTING] joined channels xato: {e}")
-    return ub1, ub2
+    return ub1, ub2, ub1_ids, ub2_ids
+
+
+def _source_numeric_id(source: str) -> str:
+    """
+    t.me/c/2364619052/1  →  -1002364619052
+    -1002364619052       →  -1002364619052
+    boshqalar            →  ""
+    """
+    import re as _re2
+    m = _re2.search(r't\.me/c/(\d+)', source)
+    if m:
+        return f"-100{m.group(1)}"
+    s = source.strip()
+    if s.lstrip('-').isdigit():
+        return s
+    return ""
 
 
 async def _music_process_list(userbot, sources, userbot_idx=0):
@@ -2378,11 +2401,21 @@ async def music_channel_tracker(userbot, userbot2=None):
                         print(f"Kanal xatosi ({source}): {e}")
             else:
                 # Har userbot faqat o'zi kirgan maxfiy kanallarni + ochiqning o'z yarmi
-                ub1_private, ub2_private = await _get_joined_channels_by_userbot()
-                all_private_ids = set(ub1_private + ub2_private)
-                public = [s for s in sources
-                          if not _is_private_source(str(s))
-                          and str(s) not in all_private_ids]
+                ub1_private, ub2_private, ub1_ids, ub2_ids = await _get_joined_channels_by_userbot()
+                all_joined_ids = ub1_ids | ub2_ids
+
+                public = []
+                for s in sources:
+                    ss = str(s)
+                    if _is_private_source(ss):
+                        continue  # invite link — allaqachon ub1/ub2_private da
+                    num = _source_numeric_id(ss)
+                    if num and num in ub1_ids:
+                        ub1_private.append(s)   # t.me/c/... → UB1 kirgan
+                    elif num and num in ub2_ids:
+                        ub2_private.append(s)   # t.me/c/... → UB2 kirgan
+                    elif ss not in all_joined_ids:
+                        public.append(s)        # haqiqiy ochiq kanal
 
                 mid  = (len(public) + 1) // 2
                 pub1 = public[:mid]
