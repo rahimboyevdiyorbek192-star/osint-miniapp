@@ -12,6 +12,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Telethon ichki ogohlantirishlarini o'chirish (eski xabar ID, MTProto spam)
+logging.getLogger('telethon').setLevel(logging.ERROR)
+logging.getLogger('telethon.network').setLevel(logging.ERROR)
+logging.getLogger('telethon.crypto').setLevel(logging.ERROR)
+
 # main.py
 import os
 import sys
