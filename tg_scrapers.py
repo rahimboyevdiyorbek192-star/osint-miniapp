@@ -2723,9 +2723,7 @@ async def music_channel_tracker(userbot, userbot2=None):
 
         global _CHANNEL_MUSIC_DONE
         _CHANNEL_MUSIC_DONE = True
-        print("[MUSIQA] Barcha kanal musiqalari skanerlandi — profil musiqasiga o'tiladi")
-
-        await asyncio.sleep(3600)
+        print("[MUSIQA] Barcha kanal musiqalari skanerlandi — yangi tsikl boshlanmoqda...")
         _CHANNEL_MUSIC_DONE = False
 
 
