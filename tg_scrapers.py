@@ -40,6 +40,10 @@ async def _check_batch_alerts(batch: list):
 # Adaptiv flood tracker: flood kelsa avtomatik sekinlashadi
 _FLOOD_PENALTY = 0.0   # qo'shimcha uyqu (soniyalarda), flood kelsa oshadi
 
+# Userbot flood tracker: {id(userbot): unix_timestamp_until_flood_expires}
+import time as _time_mod
+_UB_FLOOD_UNTIL: dict = {}
+
 def _record_flood(seconds: float):
     """Flood kelganda penalty oshirish — keyingi so'rovlar sekinlashadi."""
     global _FLOOD_PENALTY
@@ -284,13 +288,25 @@ async def safe_get_entity(userbot, target):
             except Exception:
                 pass
 
+    # Userbot hali flood davrida bo'lsa — API chaqirmay darhol None
+    _ub_key = id(userbot)
+    _flood_exp = _UB_FLOOD_UNTIL.get(_ub_key, 0)
+    if _flood_exp > _time_mod.time():
+        remaining = int(_flood_exp - _time_mod.time())
+        if remaining % 60 == 0:  # Har daqiqada bir marta log
+            print(f"[FLOOD-SKIP] Userbot flood davri: yana {remaining}s")
+        return None
+
     for attempt in range(3):
         try:
             return await userbot.get_entity(target)
         except FloodWaitError as e:
             log_flood("safe_get_entity", e.seconds)
-            # Katta flood — darhol qaytish, lekin birozgina dam berish
-            if e.seconds > 120:
+            # Katta flood — userbotni bloklash va darhol qaytish
+            if e.seconds > 60:
+                _UB_FLOOD_UNTIL[_ub_key] = _time_mod.time() + e.seconds
+                print(f"[FLOOD-LOCK] Userbot {e.seconds}s bloklandi. "
+                      f"Qo'yib berilish vaqti: {e.seconds//60} daqiqa {e.seconds%60} soniya.")
                 await asyncio.sleep(2)  # event loop ga nafs berish
                 return None
             await asyncio.sleep(e.seconds + 2)
@@ -2498,43 +2514,32 @@ def _source_numeric_id(source: str) -> str:
 
 async def _music_process_list(userbot, sources, userbot_idx=0):
     """Kanallar ro'yxatini bitta userbot bilan ketma-ket skanerlaydi."""
-    import time as _time
-    fast_count  = 0    # 2s dan tez tugagan kanallar (flood belgi)
     label = f"UB{userbot_idx+1}"
+    _ub_key = id(userbot)
 
     for i, source in enumerate(sources):
         # Event loop ga har 5 kanalda bir marta nafs berish
         if i % 5 == 0:
             await asyncio.sleep(0)
 
-        t0 = _time.monotonic()
+        # Userbot flood davrida bo'lsa — tugashini kut
+        _flood_exp = _UB_FLOOD_UNTIL.get(_ub_key, 0)
+        if _flood_exp > _time_mod.time():
+            wait_sec = int(_flood_exp - _time_mod.time()) + 5
+            print(f"[MUSIQA-{label}] Flood davri tugashini kutmoqda: {wait_sec}s...")
+            await asyncio.sleep(wait_sec)
+
         try:
             await _music_process_one_source(userbot, source, userbot_idx)
         except FloodWaitError as e:
             wait = e.seconds
             log_flood("music_channel_tracker", wait)
+            _UB_FLOOD_UNTIL[_ub_key] = _time_mod.time() + wait
             print(f"[MUSIQA-{label}] FloodWait {wait}s. Kutilmoqda...")
             await asyncio.sleep(min(wait, 3600))
-            fast_count = 0
-            continue
         except Exception as e:
             print(f"[MUSIQA-{label}] Kanal xatosi ({source}): {e}")
             await asyncio.sleep(3)
-            continue
-
-        elapsed = _time.monotonic() - t0
-
-        # Kanal 2 soniyadan tez tugatilsa — flood sababli entity None qaytgan
-        if elapsed < 2.0:
-            fast_count += 1
-        else:
-            fast_count = 0
-
-        # 10 ketma-ket tez tugatilsa → flood storm → 20 daqiqa pauza
-        if fast_count >= 10:
-            print(f"[MUSIQA-{label}] Flood storm aniqlandi — 20 daqiqa pauza...")
-            await asyncio.sleep(1200)
-            fast_count = 0
 
 
 async def music_channel_tracker(userbot, userbot2=None):
