@@ -4,6 +4,7 @@ import os
 import asyncio
 import random
 import math
+import urllib.parse
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
