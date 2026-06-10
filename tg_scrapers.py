@@ -3428,17 +3428,18 @@ async def search_keywords_local(keyword_str: str, days: int = None):
     if not keywords:
         return []
 
-    date_clause = ""
     date_param: list = []
+    fts_date_clause  = ""   # FTS5 so'rovi uchun (m. alias bilan)
+    like_date_clause = ""   # LIKE so'rovi uchun (alias siz)
     if days:
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-        date_clause = "AND m.msg_date >= ?"
-        date_param  = [cutoff]
+        fts_date_clause  = "AND m.msg_date >= ?"
+        like_date_clause = "AND msg_date >= ?"
+        date_param = [cutoff]
 
     results = []
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
         rows = []
-        fts_ok = False
         # FTS5 orqali tez qidiruv
         try:
             fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
@@ -3448,13 +3449,12 @@ async def search_keywords_local(keyword_str: str, days: int = None):
                 FROM messages_fts f
                 JOIN messages_cache m ON m.id = f.rowid
                 WHERE messages_fts MATCH ?
-                {date_clause}
+                {fts_date_clause}
                 ORDER BY m.msg_date DESC
                 LIMIT 500
             """
             async with db.execute(fts_query, [fts_terms] + date_param) as cur:
                 rows = await cur.fetchall()
-            fts_ok = True
         except Exception:
             pass
 
@@ -3467,13 +3467,12 @@ async def search_keywords_local(keyword_str: str, days: int = None):
                        text, msg_date, source
                 FROM messages_cache
                 WHERE ({like_clauses})
-                {date_clause}
+                {like_date_clause}
                 ORDER BY msg_date DESC
                 LIMIT 500
             """
             async with db.execute(like_query, like_params + date_param) as cur:
                 rows = await cur.fetchall()
-            _ = fts_ok  # suppress unused warning
 
     for (s_id, s_name, s_un, text, msg_date, source) in rows:
         search_text = (text or "").lower()
