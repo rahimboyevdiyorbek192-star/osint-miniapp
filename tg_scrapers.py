@@ -1496,6 +1496,7 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
 
         if extra_userbot is None:
             # Bitta userbot — oddiy rejim
+            _cache_batch = []
             async for msg in userbot.iter_messages(entity, limit=None, offset_date=offset_date):
                 if msg.sender_id and msg.sender_id > 0:
                     sender = msg.sender
@@ -1512,9 +1513,22 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                         s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                         s_un = getattr(sender, 'username', '') or ""
                     msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                    _cb = (msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt)
-                    msg_count_tmp += 1
-                if msg_count_tmp % 1000 == 0 and msg_count_tmp > 0:
+                    _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt))
+                    if len(_cache_batch) >= 300:
+                        try:
+                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                                await _db.executemany(
+                                    "INSERT OR IGNORE INTO messages_cache "
+                                    "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                                    "VALUES (?,?,?,?,?,?,?)", _cache_batch
+                                )
+                                await _db.commit()
+                            asyncio.create_task(_check_batch_alerts(_cache_batch))
+                        except Exception:
+                            pass
+                        _cache_batch.clear()
+                msg_count_tmp += 1
+                if msg_count_tmp % 1000 == 0:
                     try:
                         await status_msg.edit(
                             f"📨 `{msg_count_tmp}` ta xabar o'qildi | "
@@ -1522,6 +1536,18 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                         )
                     except Exception:
                         pass
+            if _cache_batch:
+                try:
+                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                        await _db.executemany(
+                            "INSERT OR IGNORE INTO messages_cache "
+                            "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                            "VALUES (?,?,?,?,?,?,?)", _cache_batch
+                        )
+                        await _db.commit()
+                    asyncio.create_task(_check_batch_alerts(_cache_batch))
+                except Exception:
+                    pass
         else:
             # Ikki userbot — 2000 tadan navbatma-navbat, parallel
             # UB1: chunk 0 (0-1999), chunk 2 (4000-5999), ...
@@ -2063,6 +2089,8 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
             pass
 
         msg_count = 0
+        _src_str = str(target)
+        _cache_batch = []
 
         # Sana filtri
         from datetime import timezone
@@ -2086,6 +2114,30 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
                 msg_dt = msg.date.replace(tzinfo=timezone.utc) if msg.date.tzinfo is None else msg.date
                 if msg_dt < offset_date:
                     break
+
+            # Keshga saqlash (matnli xabarlar)
+            if has_text and len(msg.text) > 2:
+                sender = msg.sender
+                s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+                s_name, s_un = "", ""
+                if sender and hasattr(sender, 'first_name'):
+                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                    s_un = getattr(sender, 'username', '') or ""
+                msg_dt_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
+                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:500], msg_dt_str))
+                if len(_cache_batch) >= 300:
+                    try:
+                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                            await _db.executemany(
+                                "INSERT OR IGNORE INTO messages_cache "
+                                "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                                "VALUES (?,?,?,?,?,?,?)", _cache_batch
+                            )
+                            await _db.commit()
+                        asyncio.create_task(_check_batch_alerts(_cache_batch))
+                    except Exception:
+                        pass
+                    _cache_batch.clear()
 
             msg_count += 1
             if msg_count % 500 == 0:
@@ -2175,6 +2227,20 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
                 'source':   title,
                 'matched':  ", ".join(matched)
             })
+
+        if _cache_batch:
+            try:
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                    await _db.executemany(
+                        "INSERT OR IGNORE INTO messages_cache "
+                        "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
+                        "VALUES (?,?,?,?,?,?,?)", _cache_batch
+                    )
+                    await _db.commit()
+                asyncio.create_task(_check_batch_alerts(_cache_batch))
+            except Exception:
+                pass
+            _cache_batch.clear()
 
         try:
             await status_msg.edit(
