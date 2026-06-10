@@ -2396,7 +2396,11 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     _ch_tasks = set()
 
     async def _pipeline(m):
-        # Kanal ID + xabar ID bo'yicha allaqachon saqlangan bo'lsa — yuklamasdan o'tkazib yuborish
+        _pkey = (channel_id, str(m.id))
+        # Real vaqt handler yoki boshqa userbot allaqachon yuklamoqda bo'lsa — o'tkazib yuborish
+        if _pkey in _PROCESSING_AUDIO:
+            return
+        # DB da fingerprint allaqachon saqlangan bo'lsa — yuklamasdan o'tkazib yuborish
         try:
             async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
                 async with _mdb.execute(
@@ -2408,6 +2412,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         except Exception:
             pass
 
+        _PROCESSING_AUDIO.add(_pkey)
         tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
         async with _ch_sem:
             ok = False
@@ -2449,6 +2454,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
+                _PROCESSING_AUDIO.discard(_pkey)
 
     _cache_batch = []
     _cache_src   = str(source)
