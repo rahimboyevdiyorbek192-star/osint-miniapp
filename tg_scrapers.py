@@ -2301,18 +2301,22 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     src_str = str(source).strip()
     entity = None
     channel_name = src_str
+    channel_id = ""
 
     try:
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
             async with _db.execute(
-                "SELECT numeric_id FROM resolved_channel_ids WHERE channel_link=?",
+                "SELECT numeric_id, channel_name FROM resolved_channel_ids WHERE channel_link=?",
                 (src_str,)
             ) as _cur:
                 _row = await _cur.fetchone()
         if _row and _row[0]:
             try:
-                entity = await userbot.get_entity(int(_row[0]))
-                channel_name = getattr(entity, 'title', src_str)
+                from telethon.tl.types import PeerChannel as _PeerChannel
+                _numeric = int(_row[0])
+                entity = _PeerChannel(channel_id=_numeric)
+                channel_id = str(_numeric)
+                channel_name = _row[1] or src_str
             except Exception:
                 entity = None
     except Exception:
@@ -2324,17 +2328,16 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             entity = await safe_get_entity(userbot, source)
             if entity is None:
                 return
-            # Keshga saqlash
             channel_name = getattr(entity, 'title', src_str)
-            numeric_id = str(entity.id) if hasattr(entity, 'id') else ""
-            if numeric_id:
+            channel_id = str(entity.id) if hasattr(entity, 'id') else ""
+            if channel_id:
                 now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
                 try:
                     async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
                         await _db.execute(
                             "INSERT OR REPLACE INTO resolved_channel_ids "
-                            "(channel_link, numeric_id, resolved_at) VALUES (?,?,?)",
-                            (src_str, numeric_id, now_s)
+                            "(channel_link, numeric_id, resolved_at, channel_name) VALUES (?,?,?,?)",
+                            (src_str, channel_id, now_s, channel_name)
                         )
                         await _db.commit()
                 except Exception:
@@ -2356,7 +2359,10 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
                 pass
             return
 
-    channel_id = str(entity.id)
+    if not channel_id and hasattr(entity, 'id'):
+        channel_id = str(entity.id)
+    if not channel_id:
+        return
 
     last_msg_id = 0
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:

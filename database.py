@@ -76,9 +76,14 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS resolved_channel_ids (
                 channel_link TEXT PRIMARY KEY,
                 numeric_id   TEXT,
-                resolved_at  TEXT
+                resolved_at  TEXT,
+                channel_name TEXT
             )
         """)
+        try:
+            await db.execute("ALTER TABLE resolved_channel_ids ADD COLUMN channel_name TEXT")
+        except Exception:
+            pass
         try:
             await db.execute("ALTER TABLE users_memory_bank ADD COLUMN added_date TEXT")
         except Exception:
