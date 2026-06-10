@@ -3877,7 +3877,11 @@ async def main():
 
     asyncio.create_task(engine.smart_channel_knocker(userbot, bot, SUPER_ADMIN_ID, extra_userbots=_EXTRA_USERBOTS))
     asyncio.create_task(engine.channel_join_watcher(userbot, bot, SUPER_ADMIN_ID, extra_userbots=_EXTRA_USERBOTS))
-    asyncio.create_task(engine.background_profile_tracker(userbot))
+    if userbot2 is not None:
+        asyncio.create_task(engine.background_profile_tracker(userbot,  ub_idx=0, n_userbots=2))
+        asyncio.create_task(engine.background_profile_tracker(userbot2, ub_idx=1, n_userbots=2))
+    else:
+        asyncio.create_task(engine.background_profile_tracker(userbot))
     asyncio.create_task(engine.music_channel_tracker(userbot, userbot2))
     asyncio.create_task(watch_alert_sender())
     asyncio.create_task(scan_queue_runner())
