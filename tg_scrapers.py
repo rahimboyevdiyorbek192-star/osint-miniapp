@@ -2984,15 +2984,22 @@ async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: s
 
 
 async def _cache_realtime_message(msg, src_str: str):
-    """Yangi matn xabarni messages_cache ga yozadi (real vaqt)."""
-    if not (msg.text and len(msg.text) > 2):
+    """Yangi xabarni messages_cache ga yozadi (real vaqt, 0 API)."""
+    # text yoki caption (rasm/video tagida matn) ni olish
+    text = msg.text or getattr(msg, 'caption', None) or ""
+    if len(text) < 2:
         return
     try:
-        sender = msg.sender
-        s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+        # msg.sender — eventdan keladi, keshda bo'lsa 0 API; bo'lmasa None
+        sender = msg.sender  # API chaqirmaydi, faqat keshdan qaytaradi
+        s_id = getattr(sender, 'id', None) or msg.sender_id or 0
         s_name, s_un = "", ""
         if sender and hasattr(sender, 'first_name'):
             s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+            s_un = getattr(sender, 'username', '') or ""
+        elif sender and hasattr(sender, 'title'):
+            # kanal post — sender kanal o'zi
+            s_name = sender.title or ""
             s_un = getattr(sender, 'username', '') or ""
         msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as db:
@@ -3000,7 +3007,7 @@ async def _cache_realtime_message(msg, src_str: str):
                 "INSERT OR IGNORE INTO messages_cache "
                 "(msg_id,source,sender_id,sender_name,sender_username,text,msg_date) "
                 "VALUES (?,?,?,?,?,?,?)",
-                (msg.id, src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt)
+                (msg.id, src_str, s_id, s_name, s_un, text[:2000], msg_dt)
             )
             await db.commit()
     except Exception:
@@ -3058,9 +3065,10 @@ def setup_realtime_handlers(userbot, userbot2=None, bot=None, admin_id=None):
     async def _ub1_handler(event):
         try:
             msg = event.message
-            chat = await event.get_chat()
+            # event.chat — keshdan olinadi, 0 API (get_chat() esa API qilishi mumkin)
+            chat = event.chat
             chat_id = str(abs(event.chat_id or 0))
-            chat_name = getattr(chat, 'title', chat_id)
+            chat_name = getattr(chat, 'title', chat_id) if chat else chat_id
             src_str = str(event.chat_id or chat_id)
 
             if is_music_file(msg):
@@ -3076,9 +3084,9 @@ def setup_realtime_handlers(userbot, userbot2=None, bot=None, admin_id=None):
         async def _ub2_handler(event):
             try:
                 msg = event.message
-                chat = await event.get_chat()
+                chat = event.chat
                 chat_id = str(abs(event.chat_id or 0))
-                chat_name = getattr(chat, 'title', chat_id)
+                chat_name = getattr(chat, 'title', chat_id) if chat else chat_id
                 src_str = str(event.chat_id or chat_id)
 
                 if is_music_file(msg):
