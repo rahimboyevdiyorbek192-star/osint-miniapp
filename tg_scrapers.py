@@ -43,7 +43,9 @@ _FLOOD_PENALTY = 0.0   # qo'shimcha uyqu (soniyalarda), flood kelsa oshadi
 # Userbot flood tracker: {id(userbot): unix_timestamp_until_flood_expires}
 import time as _time_mod
 _UB_FLOOD_UNTIL: dict = {}
-_PROCESSING_AUDIO: set = set()  # (channel_id, msg_id) — ikki userbot bir musiqani yuklamasligi uchun
+_PROCESSING_AUDIO: set = set()   # (channel_id, msg_id) — ikki userbot bir musiqani yuklamasligi uchun
+_JOINED_CHANNEL_QUEUE: asyncio.Queue = None  # Ochilgan maxfiy kanallar navbati
+_CURRENT_SCAN_CHANNEL: str = ""  # Hozir skanerlanyotgan kanal nomi
 
 def _record_flood(seconds: float):
     """Flood kelganda penalty oshirish — keyingi so'rovlar sekinlashadi."""
@@ -488,8 +490,8 @@ def apply_excel_styles(ws, total_rows):
         cell.alignment = center_align
         cell.border    = thin_border
 
-    # Ma'lumot qatorlari — faqat 1000 qatorgacha per-cell styling
-    style_limit = min(total_rows + 1, 1001)
+    # Ma'lumot qatorlari — barcha qatorlar
+    style_limit = total_rows + 1
     for row_num in range(2, style_limit + 1):
         idx      = row_num - 1
         row_fill = even_fill if idx % 2 == 0 else odd_fill
@@ -648,7 +650,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
         while not _iter_done:
             try:
                 async for msg in userbot.iter_messages(
-                    entity, limit=None,
+                    entity, limit=10000,
                     offset_id=_iter_offset_id, reverse=False
                 ):
                     if not msg.sender_id or msg.sender_id <= 0:
@@ -673,7 +675,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                             _maxfiy  = ""
                             _ochiq   = ""
                             try:
-                                await asyncio.sleep(0.5)
+                                await asyncio.sleep(0.2)
                                 _ub2 = _ub_pool[_ub_idx % _ub_count]
                                 _ub_idx += 1
                                 fi = await asyncio.wait_for(
@@ -1970,15 +1972,15 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                     inv_links = extract_invite_links(bio)
                     if inv_links:
                         maxfiy = ", ".join(inv_links)
-                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db2:
                             for inv in inv_links:
-                                await db.execute(
+                                await _db2.execute(
                                     "INSERT OR IGNORE INTO hidden_channel_knocker "
                                     "(channel_id, creator_id, source_group) "
                                     "VALUES (?, ?, ?)",
                                     (inv, uid, str(target))
                                 )
-                            await db.commit()
+                            await _db2.commit()
                     ch_id = getattr(fi.full_user, 'personal_channel_id', None)
                     if ch_id:
                         try:
@@ -2280,6 +2282,123 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
 # Monitoring kanallaridagi audio xabarlarni skanerLaydi
 # ─────────────────────────────────────────────────────────────────────
 
+async def _scan_discussion_users_bg(userbot, discussion_id: int, source_link: str, userbot_idx: int = 0):
+    """Musiqa kanal discussion guruhidagi foydalanuvchilarni fon rejimda skanerlaydi."""
+    try:
+        from telethon.tl.functions.users import GetFullUserRequest as _GetFullUserRequest
+        from telethon.tl.types import PeerChannel as _PeerChannel
+        _sem = asyncio.Semaphore(2)
+
+        try:
+            disc_entity = _PeerChannel(channel_id=discussion_id)
+        except Exception:
+            return
+
+        unique_users = {}
+        async for msg in userbot.iter_messages(disc_entity, limit=None):
+            if not msg.sender_id or msg.sender_id < 0:
+                continue
+            if msg.sender_id not in unique_users and msg.sender:
+                if not getattr(msg.sender, 'bot', False):
+                    unique_users[msg.sender_id] = msg.sender
+
+        if not unique_users:
+            return
+
+        # DB da allaqachon bor foydalanuvchilarni filtrlash
+        existing_ids = set()
+        try:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                async with _db.execute(
+                    "SELECT DISTINCT user_id FROM users_memory_bank WHERE group_link=?",
+                    (source_link,)
+                ) as _cur:
+                    async for _row in _cur:
+                        existing_ids.add(_row[0])
+        except Exception:
+            pass
+
+        async def _process_user(uid, user):
+            async with _sem:
+                await asyncio.sleep(0.35)
+                f_name = user.first_name or ""
+                l_name = user.last_name  or ""
+                uname  = ("@" + user.username) if user.username else ""
+                phone  = getattr(user, 'phone', '') or ""
+                bio    = ""
+                shaxsiy = ""
+                maxfiy  = ""
+                try:
+                    fi = await asyncio.wait_for(
+                        userbot(_GetFullUserRequest(uid)), timeout=20
+                    )
+                    bio = fi.full_user.about or ""
+                    inv_links = extract_invite_links(bio)
+                    if inv_links:
+                        maxfiy = ", ".join(inv_links)
+                        try:
+                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as _db:
+                                for inv in inv_links:
+                                    await _db.execute(
+                                        "INSERT OR IGNORE INTO hidden_channel_knocker "
+                                        "(channel_id, creator_id, source_group) VALUES (?,?,?)",
+                                        (inv, uid, source_link)
+                                    )
+                                await _db.commit()
+                        except Exception:
+                            pass
+                    ch_id = getattr(fi.full_user, 'personal_channel_id', None)
+                    if ch_id:
+                        try:
+                            pc_ent  = await asyncio.wait_for(userbot.get_entity(ch_id), timeout=8)
+                            pc_un   = getattr(pc_ent, 'username', None)
+                            shaxsiy = (f"https://t.me/{pc_un}" if pc_un
+                                       else f"https://t.me/c/{ch_id}/1")
+                        except Exception:
+                            shaxsiy = f"https://t.me/c/{ch_id}/1"
+                        # Shaxsiy kanalni hidden_channel_knocker navbatiga qo'shish
+                        try:
+                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                                await _db.execute(
+                                    "INSERT OR IGNORE INTO hidden_channel_knocker "
+                                    "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
+                                    "VALUES (?, ?, ?, ?, ?)",
+                                    (shaxsiy, uid, source_link, now_str, userbot_idx)
+                                )
+                                await _db.commit()
+                        except Exception:
+                            pass
+                except FloodWaitError as e:
+                    await asyncio.sleep(min(e.seconds + 2, 120))
+                except Exception:
+                    pass
+
+                if not f_name and not l_name and not uname and not bio:
+                    return
+
+                bio_links_str = ", ".join(extract_bio_links(bio)) if bio else "Yo'q"
+                b_date  = extract_exact_birth_date(bio)
+                has_db  = maxfiy if maxfiy else (shaxsiy if shaxsiy else "❌")
+                try:
+                    await db_mod.save_user_to_bank(
+                        uid, source_link, f_name, l_name, uname,
+                        phone, b_date, bio, bio_links_str, has_db
+                    )
+                except Exception:
+                    pass
+
+        tasks = [
+            asyncio.create_task(_process_user(uid, user))
+            for uid, user in unique_users.items()
+            if uid not in existing_ids
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    except Exception:
+        pass
+
 def _is_private_source(source: str) -> bool:
     """Maxfiy kanal: t.me/c/... yoki raqamli ID (-100XXXXX)."""
     s = str(source).strip()
@@ -2295,8 +2414,6 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         await asyncio.sleep(10)
     if MONITORING_PAUSED:
         return
-
-    await asyncio.sleep(2)
 
     # ── Keshdan entity ID ni olish (get_entity chaqirmaslik uchun) ──────
     src_str = str(source).strip()
@@ -2323,42 +2440,58 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     except Exception:
         pass
 
-    # Keshda yo'q — API orqali olish va keshga yozish
+    # Keshda yo'q — tekshir
     if entity is None:
-        try:
-            entity = await safe_get_entity(userbot, source)
-            if entity is None:
-                return
-            channel_name = getattr(entity, 'title', src_str)
-            channel_id = str(entity.id) if hasattr(entity, 'id') else ""
-            if channel_id:
-                now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
-                try:
-                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                        await _db.execute(
-                            "INSERT OR REPLACE INTO resolved_channel_ids "
-                            "(channel_link, numeric_id, resolved_at, channel_name) VALUES (?,?,?,?)",
-                            (src_str, channel_id, now_s, channel_name)
-                        )
-                        await _db.commit()
-                except Exception:
-                    pass
-        except Exception:
+        # 1. Invite havola → safe_get_entity CHAQIRMASDAN, to'g'ri hidden_channel_knocker ga
+        is_invite = "t.me/+" in src_str or "t.me/joinchat/" in src_str
+        if is_invite:
             try:
-                is_invite = "t.me/+" in src_str or "t.me/joinchat/" in src_str
-                if is_invite:
-                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-                        await db.execute(
-                            "INSERT OR IGNORE INTO hidden_channel_knocker "
-                            "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
-                            "VALUES (?, 0, 'Musiqa Tracker', ?, ?)",
-                            (source, now_str, userbot_idx)
-                        )
-                        await db.commit()
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO hidden_channel_knocker "
+                        "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
+                        "VALUES (?, 0, 'Musiqa Tracker', ?, ?)",
+                        (source, now_str, userbot_idx)
+                    )
+                    await db.commit()
             except Exception:
                 pass
             return
+
+        # 2. Numeric ID → PeerChannel (API so'rovisiz)
+        _raw = src_str.lstrip('-')
+        if _raw.isdigit():
+            try:
+                from telethon.tl.types import PeerChannel as _PeerChannel
+                _numeric = int(src_str.lstrip('-'))
+                entity = _PeerChannel(channel_id=_numeric)
+                channel_id = str(_numeric)
+            except Exception:
+                entity = None
+
+        # 3. @username → safe_get_entity (faqat bir marta, keshga yoziladi)
+        if entity is None:
+            try:
+                entity = await safe_get_entity(userbot, source)
+                if entity is None:
+                    return
+                channel_name = getattr(entity, 'title', src_str)
+                channel_id = str(entity.id) if hasattr(entity, 'id') else ""
+                if channel_id:
+                    now_s = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    try:
+                        async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                            await _db.execute(
+                                "INSERT OR REPLACE INTO resolved_channel_ids "
+                                "(channel_link, numeric_id, resolved_at, channel_name) VALUES (?,?,?,?)",
+                                (src_str, channel_id, now_s, channel_name)
+                            )
+                            await _db.commit()
+                    except Exception:
+                        pass
+            except Exception:
+                return
 
     if not channel_id and hasattr(entity, 'id'):
         channel_id = str(entity.id)
@@ -2391,16 +2524,17 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         iter_kwargs["min_id"] = last_msg_id
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
-    CONCURRENCY = 3
-    _ch_sem   = asyncio.Semaphore(CONCURRENCY)
-    _ch_tasks = set()
+    import os as _os
+    _cpu_count  = _os.cpu_count() or 2
+    _fp_workers = max(2, _cpu_count // 2)        # Fizik yadro soni (HT ni hisobga olmaydi)
+    _DL_SEM     = asyncio.Semaphore(4)           # Parallel yuklab olish (I/O)
+    _FP_SEM     = asyncio.Semaphore(_fp_workers) # Parallel fingerprint (fizik yadro)
+    _ch_tasks   = set()
 
     async def _pipeline(m):
         _pkey = (channel_id, str(m.id))
-        # Real vaqt handler yoki boshqa userbot allaqachon yuklamoqda bo'lsa — o'tkazib yuborish
         if _pkey in _PROCESSING_AUDIO:
             return
-        # DB da fingerprint allaqachon saqlangan bo'lsa — yuklamasdan o'tkazib yuborish
         try:
             async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
                 async with _mdb.execute(
@@ -2414,7 +2548,9 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
 
         _PROCESSING_AUDIO.add(_pkey)
         tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
-        async with _ch_sem:
+
+        # 1. Yuklab olish (I/O — _DL_SEM bilan)
+        async with _DL_SEM:
             ok = False
             for attempt in range(3):
                 try:
@@ -2430,7 +2566,11 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
                     if attempt < 2:
                         await asyncio.sleep(1)
             if not ok:
+                _PROCESSING_AUDIO.discard(_pkey)
                 return
+
+        # 2. Fingerprint (CPU — _FP_SEM bilan, har yadro alohida)
+        async with _FP_SEM:
             try:
                 fp, duration = await music_mod.get_fingerprint_async(tmp_path)
                 if fp:
@@ -2459,15 +2599,22 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     _cache_batch = []
     _cache_src   = str(source)
     _msg_counter = 0
+    _discussion_id = None  # Kanal discussion guruhi ID si
 
     async for msg in userbot.iter_messages(entity, **iter_kwargs):
         _msg_counter += 1
         # reverse=True: ID lar doim o'sib boradi
         new_last_id = msg.id
 
-        # Har 100 xabardan keyin 1s kutish — flood oldini olish
-        if _msg_counter % 100 == 0:
-            await asyncio.sleep(1)
+        # Discussion guruh ID sini birinchi uchraganda olish (0 extra API)
+        if _discussion_id is None and msg.replies:
+            _did = getattr(msg.replies, 'channel_id', None)
+            if _did:
+                _discussion_id = _did
+
+        # Har 200 xabardan keyin event loop ga yield — flood emas, faqat boshqa tasklarga joy
+        if _msg_counter % 200 == 0:
+            await asyncio.sleep(0)
 
         if is_music_file(msg):
             t = asyncio.create_task(_pipeline(msg))
@@ -2528,6 +2675,12 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
 
     if _ch_tasks:
         await asyncio.gather(*_ch_tasks, return_exceptions=True)
+
+    # Discussion guruhi topilgan bo'lsa — fon rejimda foydalanuvchilarni skanerlash
+    if _discussion_id:
+        asyncio.create_task(
+            _scan_discussion_users_bg(userbot, _discussion_id, _cache_src, userbot_idx)
+        )
 
     if new_last_id > last_msg_id:
         try:
@@ -2631,6 +2784,17 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
         if i % 5 == 0:
             await asyncio.sleep(0)
 
+        # Cursor OLDIN saqlash — bot o'chsa ham keyingi kanaldan davom etadi
+        try:
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                await _db.execute(
+                    "INSERT OR REPLACE INTO music_scan_state (key, value) VALUES (?,?)",
+                    (cursor_key, str(i + 1))
+                )
+                await _db.commit()
+        except Exception:
+            pass
+
         # Userbot flood davrida bo'lsa — tugashini kut
         _flood_exp = _UB_FLOOD_UNTIL.get(_ub_key, 0)
         if _flood_exp > _time_mod.time():
@@ -2638,6 +2802,8 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
             print(f"[MUSIQA-{label}] Flood davri tugashini kutmoqda: {wait_sec}s...")
             await asyncio.sleep(wait_sec)
 
+        global _CURRENT_SCAN_CHANNEL
+        _CURRENT_SCAN_CHANNEL = str(source)
         try:
             await _music_process_one_source(userbot, source, userbot_idx)
         except FloodWaitError as e:
@@ -2650,16 +2816,31 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
             print(f"[MUSIQA-{label}] Kanal xatosi ({source}): {e}")
             await asyncio.sleep(3)
 
-        # Har kanal tugagach cursor ni saqlash
-        try:
-            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                await _db.execute(
-                    "INSERT OR REPLACE INTO music_scan_state (key, value) VALUES (?,?)",
-                    (cursor_key, str(i + 1))
-                )
-                await _db.commit()
-        except Exception:
-            pass
+        # Ochilgan maxfiy kanallar navbatini tekshir — keyingi kanalga o'tishdan oldin
+        while _JOINED_CHANNEL_QUEUE is not None and not _JOINED_CHANNEL_QUEUE.empty():
+            try:
+                _jc = _JOINED_CHANNEL_QUEUE.get_nowait()
+                _jc_link = _jc['link']
+                _jc_name = _jc['name']
+                _jc_bot  = _jc['bot']
+                _jc_adm  = _jc['admin_id']
+                _CURRENT_SCAN_CHANNEL = _jc_link
+                print(f"[MUSIQA-{label}] Ochilgan maxfiy kanal skanerlanmoqda: {_jc_name}")
+                await _music_process_one_source(userbot, _jc_link, userbot_idx)
+                print(f"[MUSIQA-{label}] Maxfiy kanal skaner tugadi: {_jc_name}")
+                try:
+                    await _jc_bot.send_message(
+                        _jc_adm,
+                        f"✅ **Maxfiy kanal skanerlandi!**\n\n"
+                        f"📢 Kanal: `{_jc_name}`\n"
+                        f"🎵 Barcha musiqalar fingerprint qilindi"
+                    )
+                except Exception:
+                    pass
+            except asyncio.QueueEmpty:
+                break
+            except Exception as _je:
+                print(f"[MUSIQA-{label}] Maxfiy kanal xatosi: {_je}")
 
     # Tsikl tugadi — cursori tozalash (keyingi tsikl yangidan boshlansin)
     try:
@@ -2753,14 +2934,15 @@ async def music_channel_tracker(userbot, userbot2=None):
 
 async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: str):
     """Bitta yangi audio faylni yuklab fingerprint oladi (real vaqt)."""
-    # Ikki userbot bir kanalda bo'lsa — faqat bittasi ishlaydi
     _key = (channel_id, str(msg.id))
     if _key in _PROCESSING_AUDIO:
         return
     _PROCESSING_AUDIO.add(_key)
 
+    BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
+    tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_rt_{channel_id}_{msg.id}.ogg")
     try:
-        # Bazada allaqachon saqlangan bo'lsa — o'tkazib yuborish
+        # Bazada allaqachon saqlangan bo'lsa — yuklamasdan o'tkazib yuborish
         try:
             async with aiosqlite.connect(music_mod.MUSIC_DB, timeout=5) as _mdb:
                 async with _mdb.execute(
@@ -2772,9 +2954,6 @@ async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: s
         except Exception:
             pass
 
-    BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
-    tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_rt_{channel_id}_{msg.id}.ogg")
-    try:
         await msg.download_media(file=tmp_path)
         if not (os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0):
             return
@@ -2828,14 +3007,52 @@ async def _cache_realtime_message(msg, src_str: str):
         pass
 
 
-def setup_realtime_handlers(userbot, userbot2=None):
+def setup_realtime_handlers(userbot, userbot2=None, bot=None, admin_id=None):
     """
-    Userbotlarga real vaqt xabar handlerlarini ulaydi.
-    Userbot a'zo kanallardan yangi xabar kelganda:
-      - audio/mpeg yoki audio/mp4 → darhol yukla+fingerprint (API yo'q)
-      - matn → messages_cache ga yoz
+    Userbotlarga real vaqt handlerlarini ulaydi:
+      - NewMessage: audio → fingerprint, matn → kesh
+      - UpdateChannel: maxfiy kanal ochildi → darhol xabar (0 API)
     """
     from telethon import events as _events
+    from telethon.tl.types import UpdateChannel as _UpdateChannel
+
+    async def _check_channel_opened(ub, channel_id: int, ub_idx: int):
+        """UpdateChannel kelganda pending ro'yxatida tekshiradi (0 API)."""
+        try:
+            num_str  = str(channel_id)
+            num_full = f"-100{channel_id}"
+            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                async with _db.execute(
+                    "SELECT channel_id, creator_id, source_group "
+                    "FROM hidden_channel_knocker "
+                    "WHERE status='pending' AND userbot_idx=? "
+                    "AND (numeric_id=? OR numeric_id=?)",
+                    (ub_idx, num_str, num_full)
+                ) as _cur:
+                    row = await _cur.fetchone()
+            if not row:
+                return
+            ch_link, creator_id, source_group = row
+            try:
+                entity = await ub.get_entity(channel_id)
+            except Exception:
+                return
+            if bot and admin_id:
+                await _notify_channel_joined(
+                    ub, bot, admin_id, ub_idx,
+                    entity, ch_link, ch_link, creator_id, source_group
+                )
+        except Exception:
+            pass
+
+    @userbot.on(_events.Raw(_UpdateChannel))
+    async def _ub1_channel_update(update):
+        asyncio.create_task(_check_channel_opened(userbot, update.channel_id, 0))
+
+    if userbot2:
+        @userbot2.on(_events.Raw(_UpdateChannel))
+        async def _ub2_channel_update(update):
+            asyncio.create_task(_check_channel_opened(userbot2, update.channel_id, 1))
 
     @userbot.on(_events.NewMessage)
     async def _ub1_handler(event):
@@ -2885,7 +3102,12 @@ def is_music_file(msg):
         mime = (getattr(msg.audio, 'mime_type', '') or '').lower().strip()
         if not mime:
             return False
-        return mime in ('audio/mpeg', 'audio/mp4')
+        return mime in (
+            'audio/mpeg', 'audio/mp3', 'audio/mp4',
+            'audio/wav', 'audio/x-wav',
+            'audio/flac',
+            'audio/m4a', 'audio/x-m4a',
+        )
     return False
 
 async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
@@ -3076,12 +3298,18 @@ async def _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_i
         f"🆔 ID: `{numeric_id_str}`\n"
         f"🏢 Manba: `{source_group}`\n"
         f"🤖 Userbot{idx + 1} orqali\n\n"
-        f"🎵 Kanal musiqalari skanerlanmoqda..."
+        f"🎵 Hozir skanerlanyapti: `{_CURRENT_SCAN_CHANNEL or '—'}`\n"
+        f"⏳ U tugagach `{ch_name}` skanerlanadi..."
     )
-    asyncio.create_task(
-        _scan_channel_music_after_join(ub, bot, admin_id, entity, ch_id_str)
-    )
-    print(f"[WATCHER] ✅ Kanal ochildi: {ch_name}")
+    # Parallel task emas — aylanma skan navbati orqali ketma-ket ishlanadi
+    if _JOINED_CHANNEL_QUEUE is not None:
+        _JOINED_CHANNEL_QUEUE.put_nowait({
+            'link':     ch_id_str,
+            'name':     ch_name,
+            'bot':      bot,
+            'admin_id': admin_id,
+        })
+    print(f"[WATCHER] ✅ Kanal ochildi, navbatga qo'shildi: {ch_name}")
 
 
 async def _get_channel_dialog_ids(ub) -> set:
@@ -3241,10 +3469,8 @@ async def channel_join_watcher(userbot, bot, admin_id, extra_userbots=None):
                             _match_new_channel_to_pending(ub, bot, admin_id, idx, cid)
                         )
 
-            # === Layer 2: 2-soatlik backup ===
-            if (datetime.now() - last_backup).total_seconds() >= BACKUP_SCAN_INTERVAL:
-                last_backup = datetime.now()
-                asyncio.create_task(_backup_full_scan(all_bots, bot, admin_id))
+            # 2-soatlik backup olib tashlandi:
+            # UpdateChannel event handler barcha holatni qoplaydi (0 API)
 
         except Exception as e:
             print(f"[WATCHER] Xato: {e}")

@@ -926,13 +926,56 @@ async def run_keyword_search(sender_id, keyword, status_msg, days=None):
             )
 
             if not all_results:
-                await bot.send_message(
-                    sender_id,
-                    f"🔎 **`{keyword}`** — lokal bazada topilmadi.\n"
-                    f"💾 Kesh: `{cache_total:,}` xabar | Davr: {davr_str}\n"
-                    f"💡 Kesh yangilanmagan bo'lsa /sync_cache buyrug'ini yuboring."
+                try:
+                    await status_msg.edit(
+                        f"🔎 **`{keyword}`** — xabarlar keshida topilmadi.\n"
+                        f"👤 Profil bazasidan qidirilmoqda..."
+                    )
+                except Exception:
+                    pass
+
+                # Ikkinchi lokal kesh: users_memory_bank (ism, bio, username)
+                kw_lower = keyword.lower()
+                async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
+                    async with db.execute(
+                        """SELECT user_id, first_name, last_name, username, bio, group_link
+                           FROM users_memory_bank
+                           WHERE LOWER(first_name) LIKE ?
+                              OR LOWER(last_name)  LIKE ?
+                              OR LOWER(username)   LIKE ?
+                              OR LOWER(bio)        LIKE ?
+                           LIMIT 200""",
+                        (f"%{kw_lower}%", f"%{kw_lower}%",
+                         f"%{kw_lower}%", f"%{kw_lower}%")
+                    ) as cur:
+                        prof_rows = await cur.fetchall()
+
+                for (uid, fn, ln, un, bio, grp) in prof_rows:
+                    name = f"{fn or ''} {ln or ''}".strip()
+                    all_results.append({
+                        'name':     name,
+                        'username': un or "",
+                        'user_id':  uid or 0,
+                        'date':     "",
+                        'text':     bio or "",
+                        'source':   grp or "",
+                        'matched':  keyword,
+                    })
+
+                if not all_results:
+                    await bot.send_message(
+                        sender_id,
+                        f"🔎 **`{keyword}`** — ikki lokal keshda ham topilmadi.\n"
+                        f"💾 Kesh: `{cache_total:,}` xabar | Davr: {davr_str}"
+                    )
+                    return
+
+                header = (
+                    f"🔎 **Qidiruv natijalari (profil baza):** `{keyword}`\n"
+                    f"📅 Davr: **{davr_str}**\n"
+                    f"📊 Topildi: `{len(all_results)}` ta\n"
+                    f"{'─' * 30}\n\n"
                 )
-                return
 
             header = (
                 f"🔎 **Qidiruv natijalari (lokal):** `{keyword}`\n"
@@ -3849,7 +3892,6 @@ async def main():
     # asyncio.Queue lar event loop ichida yaratilishi kerak
     global _SCAN_QUEUE
     _SCAN_QUEUE = asyncio.Queue()
-    engine._WATCH_ALERTS = asyncio.Queue()
 
     await db_mod.init_db()
     await music.init_music_db()
@@ -3880,6 +3922,10 @@ async def main():
         except Exception:
             pass
 
+    # Navbatlar — tasklar boshlanishidan oldin tayyor bo'lishi shart
+    engine._WATCH_ALERTS        = asyncio.Queue()
+    engine._JOINED_CHANNEL_QUEUE = asyncio.Queue()
+
     asyncio.create_task(engine.smart_channel_knocker(userbot, bot, SUPER_ADMIN_ID, extra_userbots=_EXTRA_USERBOTS))
     asyncio.create_task(engine.channel_join_watcher(userbot, bot, SUPER_ADMIN_ID, extra_userbots=_EXTRA_USERBOTS))
     if userbot2 is not None:
@@ -3891,7 +3937,7 @@ async def main():
     asyncio.create_task(watch_alert_sender())
     asyncio.create_task(scan_queue_runner())
     # Real vaqt handler: a'zo kanallarda yangi xabar → API chaqiruvsiz
-    engine.setup_realtime_handlers(userbot, userbot2)
+    engine.setup_realtime_handlers(userbot, userbot2, bot=bot, admin_id=SUPER_ADMIN_ID)
     print("✅ Kiber-Stansiya OSINT Pro ishga tushdi!")
     await bot.run_until_disconnected()
 
