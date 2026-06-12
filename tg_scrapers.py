@@ -3895,7 +3895,8 @@ async def sync_source_messages(userbot, source: str, limit_days: int = 90):
 
 async def search_keywords_local(keyword_str: str, days: int = None):
     """
-    Lokal messages_cache dan kalit so'z qidiradi (FTS5 → LIKE fallback).
+    Lokal messages_cache dan kalit so'z qidiradi.
+    FTS5 VA LIKE ikkalasini ishlatib, id bo'yicha deduplikatsiya qiladi.
     Telegram API ga murojaat qilmaydi.
     Qaytaradi: natijalar ro'yxati [{name, username, user_id, date, text, source, matched}]
     """
@@ -3907,22 +3908,24 @@ async def search_keywords_local(keyword_str: str, days: int = None):
         return []
 
     date_param: list = []
-    fts_date_clause  = ""   # FTS5 so'rovi uchun (m. alias bilan)
-    like_date_clause = ""   # LIKE so'rovi uchun (alias siz)
+    fts_date_clause  = ""
+    like_date_clause = ""
     if days:
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         fts_date_clause  = "AND m.msg_date >= ?"
         like_date_clause = "AND msg_date >= ?"
         date_param = [cutoff]
 
-    results = []
+    seen_ids: set = set()
+    # (sender_id, sender_name, sender_username, text, msg_date, source)
+    combined_rows: list = []
+
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-        rows = []
-        # FTS5 orqali tez qidiruv
+        # 1. FTS5 — tez indeks qidiradi (faqat trigger orqali indekslangan satrlar)
         try:
             fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
             fts_query = f"""
-                SELECT m.sender_id, m.sender_name, m.sender_username,
+                SELECT m.id, m.sender_id, m.sender_name, m.sender_username,
                        m.text, m.msg_date, m.source
                 FROM messages_fts f
                 JOIN messages_cache m ON m.id = f.rowid
@@ -3932,27 +3935,36 @@ async def search_keywords_local(keyword_str: str, days: int = None):
                 LIMIT 500
             """
             async with db.execute(fts_query, [fts_terms] + date_param) as cur:
-                rows = await cur.fetchall()
+                for row in await cur.fetchall():
+                    row_id = row[0]
+                    if row_id not in seen_ids:
+                        seen_ids.add(row_id)
+                        combined_rows.append(row[1:])  # id siz
         except Exception:
             pass
 
-        # FTS5 natija yo'q (xato yoki index hali to'ldirilmagan) — LIKE fallback
-        if not rows:
-            like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
-            like_params  = [f"%{kw}%" for kw in keywords]
-            like_query = f"""
-                SELECT sender_id, sender_name, sender_username,
-                       text, msg_date, source
-                FROM messages_cache
-                WHERE ({like_clauses})
-                {like_date_clause}
-                ORDER BY msg_date DESC
-                LIMIT 500
-            """
-            async with db.execute(like_query, like_params + date_param) as cur:
-                rows = await cur.fetchall()
+        # 2. LIKE — messages_cache dagi BARCHA satrlarni qidiradi
+        #    (FTS5 indeksida bo'lmagan eski ma'lumotlarni ham topadi)
+        like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
+        like_params  = [f"%{kw}%" for kw in keywords]
+        like_query = f"""
+            SELECT id, sender_id, sender_name, sender_username,
+                   text, msg_date, source
+            FROM messages_cache
+            WHERE ({like_clauses})
+            {like_date_clause}
+            ORDER BY msg_date DESC
+            LIMIT 500
+        """
+        async with db.execute(like_query, like_params + date_param) as cur:
+            for row in await cur.fetchall():
+                row_id = row[0]
+                if row_id not in seen_ids:
+                    seen_ids.add(row_id)
+                    combined_rows.append(row[1:])  # id siz
 
-    for (s_id, s_name, s_un, text, msg_date, source) in rows:
+    results = []
+    for (s_id, s_name, s_un, text, msg_date, source) in combined_rows:
         search_text = (text or "").lower()
         matched = [kw for kw in keywords if kw in search_text]
         if not matched:
