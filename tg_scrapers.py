@@ -2621,16 +2621,22 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             _ch_tasks.add(t)
             t.add_done_callback(_ch_tasks.discard)
 
-        if msg.text and len(msg.text) > 2:
-            sender = msg.sender
-            s_id   = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
+        _msg_text = msg.text or getattr(msg, 'caption', None) or ""
+        if len(_msg_text) > 2:
+            s_id   = msg.sender_id or 0
             s_name = ""
             s_un   = ""
-            if sender and hasattr(sender, 'first_name'):
-                s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
-                s_un   = getattr(sender, 'username', '') or ""
+            sender = msg.sender  # keshda bo'lsa 0 API, bo'lmasa None
+            if sender:
+                if hasattr(sender, 'first_name'):
+                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                    s_un   = getattr(sender, 'username', '') or ""
+                elif hasattr(sender, 'title'):
+                    # kanal post — sender kanal o'zi
+                    s_name = sender.title or ""
+                    s_un   = getattr(sender, 'username', '') or ""
             msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:2000], msg_dt))
+            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, _msg_text[:2000], msg_dt))
 
         if len(_cache_batch) >= 300:
             try:
