@@ -3973,26 +3973,26 @@ async def search_keywords_local(keyword_str: str, days: int = None):
 
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
 
-        # 0. Kanal ID bo'yicha source qidiruv (raqamli kalit so'z)
+        # 0. Kanal ID bo'yicha — o'sha kanalda xabar yozgan unikal foydalanuvchilar
         for ch_kw in channel_id_keywords:
-            # -1002254316592, 1002254316592 — har ikkisini tekshir
             variants = {ch_kw, ch_kw.lstrip('-'), f"-{ch_kw.lstrip('-')}",
                         f"-100{ch_kw.lstrip('-0')}"}
             for v in variants:
                 src_query = f"""
-                    SELECT id, sender_id, sender_name, sender_username,
-                           text, msg_date, source
+                    SELECT sender_id, sender_name, sender_username, source
                     FROM messages_cache
                     WHERE source = ?
+                      AND sender_id > 0
                     {like_date_clause}
-                    ORDER BY msg_date DESC
+                    GROUP BY sender_id
                     LIMIT 500
                 """
                 async with db.execute(src_query, [v] + date_param) as cur:
-                    for row in await cur.fetchall():
-                        if row[0] not in seen_ids:
-                            seen_ids.add(row[0])
-                            combined_rows.append(row[1:])
+                    for (sid, sname, sun, src) in await cur.fetchall():
+                        if sid and sid not in seen_ids:
+                            seen_ids.add(sid)
+                            # (sender_id, sender_name, sender_username, text, msg_date, source)
+                            combined_rows.append((sid, sname, sun, "", "", src))
 
         if text_keywords:
             # 1. FTS5 — tez indeks qidiradi (faqat trigger orqali indekslangan satrlar)
@@ -4041,23 +4041,31 @@ async def search_keywords_local(keyword_str: str, days: int = None):
         display = text or ""
         if len(display) > 300:
             display = display[:297] + "..."
-        # Kanal ID qidiruvi uchun matched = source, aks holda matn tekshiruvi
-        if channel_id_keywords:
-            matched_kws = channel_id_keywords[:]
+        if channel_id_keywords and not text_keywords:
+            # Kanal ID qidiruvi: foydalanuvchi ma'lumotlari
+            results.append({
+                'name':     s_name or "",
+                'username': s_un   or "",
+                'user_id':  s_id   or 0,
+                'date':     msg_date or "",
+                'text':     display,
+                'source':   source or "",
+                'matched':  source or "",
+            })
         else:
             search_text = (text or "").lower()
-            matched_kws = [kw for kw in keywords if kw in search_text]
+            matched_kws = [kw for kw in text_keywords if kw in search_text]
             if not matched_kws:
                 continue
-        results.append({
-            'name':     s_name or "",
-            'username': s_un   or "",
-            'user_id':  s_id   or 0,
-            'date':     msg_date or "",
-            'text':     display,
-            'source':   source or "",
-            'matched':  ", ".join(matched_kws)
-        })
+            results.append({
+                'name':     s_name or "",
+                'username': s_un   or "",
+                'user_id':  s_id   or 0,
+                'date':     msg_date or "",
+                'text':     display,
+                'source':   source or "",
+                'matched':  ", ".join(matched_kws),
+            })
 
     return results
 
