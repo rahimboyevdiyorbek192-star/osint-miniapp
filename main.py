@@ -918,24 +918,14 @@ async def run_keyword_search(sender_id, keyword, status_msg, days=None):
             except Exception:
                 pass
 
-            all_results = await engine.search_keywords_local(keyword, days=days)
-
             davr_str = (
                 f"Oxirgi {days} kun" if days and days < 365
                 else ("Oxirgi 1 yil" if days == 365 else "Hammasi")
             )
 
-            if not all_results:
-                try:
-                    await status_msg.edit(
-                        f"🔎 **`{keyword}`** — xabarlar keshida topilmadi.\n"
-                        f"👤 Profil bazasidan qidirilmoqda..."
-                    )
-                except Exception:
-                    pass
-
-                # Ikkinchi lokal kesh: users_memory_bank (ism, bio, username)
-                kw_lower = keyword.lower()
+            # Ikki keshni parallel qidirish
+            kw_lower = keyword.lower()
+            async def _search_profiles():
                 async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
                     async with db.execute(
                         """SELECT user_id, first_name, last_name, username, bio, group_link
@@ -948,34 +938,39 @@ async def run_keyword_search(sender_id, keyword, status_msg, days=None):
                         (f"%{kw_lower}%", f"%{kw_lower}%",
                          f"%{kw_lower}%", f"%{kw_lower}%")
                     ) as cur:
-                        prof_rows = await cur.fetchall()
+                        return await cur.fetchall()
 
-                for (uid, fn, ln, un, bio, grp) in prof_rows:
-                    name = f"{fn or ''} {ln or ''}".strip()
-                    all_results.append({
-                        'name':     name,
-                        'username': un or "",
-                        'user_id':  uid or 0,
-                        'date':     "",
-                        'text':     bio or "",
-                        'source':   grp or "",
-                        'matched':  keyword,
-                    })
+            msg_results, prof_rows = await asyncio.gather(
+                engine.search_keywords_local(keyword, days=days),
+                _search_profiles()
+            )
 
-                if not all_results:
-                    await bot.send_message(
-                        sender_id,
-                        f"🔎 **`{keyword}`** — ikki lokal keshda ham topilmadi.\n"
-                        f"💾 Kesh: `{cache_total:,}` xabar | Davr: {davr_str}"
-                    )
-                    return
+            # Profil natijalarini xabar natijalariga qo'shish (takrorlanmasdan)
+            seen_uids = {r['user_id'] for r in msg_results if r['user_id']}
+            for (uid, fn, ln, un, bio, grp) in prof_rows:
+                if uid and uid in seen_uids:
+                    continue
+                seen_uids.add(uid)
+                name = f"{fn or ''} {ln or ''}".strip()
+                msg_results.append({
+                    'name':     name,
+                    'username': un or "",
+                    'user_id':  uid or 0,
+                    'date':     "",
+                    'text':     bio or "",
+                    'source':   grp or "",
+                    'matched':  keyword,
+                })
 
-                header = (
-                    f"🔎 **Qidiruv natijalari (profil baza):** `{keyword}`\n"
-                    f"📅 Davr: **{davr_str}**\n"
-                    f"📊 Topildi: `{len(all_results)}` ta\n"
-                    f"{'─' * 30}\n\n"
+            all_results = msg_results
+
+            if not all_results:
+                await bot.send_message(
+                    sender_id,
+                    f"🔎 **`{keyword}`** — ikki lokal keshda ham topilmadi.\n"
+                    f"💾 Kesh: `{cache_total:,}` xabar | Davr: {davr_str}"
                 )
+                return
 
             header = (
                 f"🔎 **Qidiruv natijalari (lokal):** `{keyword}`\n"
