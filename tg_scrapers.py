@@ -47,13 +47,6 @@ _PROCESSING_AUDIO: set = set()   # (channel_id, msg_id) — ikki userbot bir mus
 _JOINED_CHANNEL_QUEUE: asyncio.Queue = None  # Ochilgan maxfiy kanallar navbati
 _CURRENT_SCAN_CHANNEL: str = ""  # Hozir skanerlanyotgan kanal nomi
 
-# Barcha userbotlar uchun umumiy semaphoralar (modul darajasida)
-# Shunday qilib 2 userbot birgalikda ham limitdan oshmaydi
-_CPU_COUNT  = os.cpu_count() or 2
-_FP_WORKERS = max(2, _CPU_COUNT // 2)   # fizik yadro soni (HT ni hisobga olmaydi)
-_DL_SEM     = asyncio.Semaphore(8)      # Jami 8 ta parallel yuklab olish (I/O, CPU yuklamaydi)
-_FP_SEM     = asyncio.Semaphore(_FP_WORKERS)  # Jami N ta parallel fingerprint (CPU)
-
 def _record_flood(seconds: float):
     """Flood kelganda penalty oshirish — keyingi so'rovlar sekinlashadi."""
     global _FLOOD_PENALTY
@@ -497,8 +490,8 @@ def apply_excel_styles(ws, total_rows):
         cell.alignment = center_align
         cell.border    = thin_border
 
-    # Ma'lumot qatorlari — barcha qatorlar
-    style_limit = total_rows + 1
+    # Ma'lumot qatorlari — faqat 1000 qatorgacha per-cell styling
+    style_limit = min(total_rows + 1, 1001)
     for row_num in range(2, style_limit + 1):
         idx      = row_num - 1
         row_fill = even_fill if idx % 2 == 0 else odd_fill
@@ -682,7 +675,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                             _maxfiy  = ""
                             _ochiq   = ""
                             try:
-                                await asyncio.sleep(0.2)
+                                await asyncio.sleep(0.5)
                                 _ub2 = _ub_pool[_ub_idx % _ub_count]
                                 _ub_idx += 1
                                 fi = await asyncio.wait_for(
@@ -2551,6 +2544,11 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         iter_kwargs["min_id"] = last_msg_id
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
+    import os as _os
+    _cpu_count  = _os.cpu_count() or 2
+    _fp_workers = max(2, _cpu_count // 2)        # Fizik yadro soni (HT ni hisobga olmaydi)
+    _DL_SEM     = asyncio.Semaphore(4)           # Parallel yuklab olish (I/O)
+    _FP_SEM     = asyncio.Semaphore(_fp_workers) # Parallel fingerprint (fizik yadro)
     _ch_tasks   = set()
 
     async def _pipeline(m):
@@ -2643,22 +2641,16 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             _ch_tasks.add(t)
             t.add_done_callback(_ch_tasks.discard)
 
-        _msg_text = msg.text or getattr(msg, 'caption', None) or ""
-        if len(_msg_text) > 2:
-            s_id   = msg.sender_id or 0
+        if msg.text and len(msg.text) > 2:
+            sender = msg.sender
+            s_id   = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
             s_name = ""
             s_un   = ""
-            sender = msg.sender  # keshda bo'lsa 0 API, bo'lmasa None
-            if sender:
-                if hasattr(sender, 'first_name'):
-                    s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
-                    s_un   = getattr(sender, 'username', '') or ""
-                elif hasattr(sender, 'title'):
-                    # kanal post — sender kanal o'zi
-                    s_name = sender.title or ""
-                    s_un   = getattr(sender, 'username', '') or ""
+            if sender and hasattr(sender, 'first_name'):
+                s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
+                s_un   = getattr(sender, 'username', '') or ""
             msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, _msg_text[:2000], msg_dt))
+            _cache_batch.append((msg.id, _cache_src, s_id, s_name, s_un, msg.text[:2000], msg_dt))
 
         if len(_cache_batch) >= 300:
             try:
@@ -3013,20 +3005,17 @@ async def _process_realtime_audio(userbot, msg, channel_id: str, channel_name: s
 
 async def _cache_realtime_message(msg, src_str: str):
     """Yangi xabarni messages_cache ga yozadi (real vaqt, 0 API)."""
-    # text yoki caption (rasm/video tagida matn) ni olish
     text = msg.text or getattr(msg, 'caption', None) or ""
     if len(text) < 2:
         return
     try:
-        # msg.sender — eventdan keladi, keshda bo'lsa 0 API; bo'lmasa None
-        sender = msg.sender  # API chaqirmaydi, faqat keshdan qaytaradi
+        sender = msg.sender
         s_id = getattr(sender, 'id', None) or msg.sender_id or 0
         s_name, s_un = "", ""
         if sender and hasattr(sender, 'first_name'):
             s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
             s_un = getattr(sender, 'username', '') or ""
         elif sender and hasattr(sender, 'title'):
-            # kanal post — sender kanal o'zi
             s_name = sender.title or ""
             s_un = getattr(sender, 'username', '') or ""
         msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
@@ -3093,8 +3082,7 @@ def setup_realtime_handlers(userbot, userbot2=None, bot=None, admin_id=None):
     async def _ub1_handler(event):
         try:
             msg = event.message
-            # event.chat — keshdan olinadi, 0 API (get_chat() esa API qilishi mumkin)
-            chat = event.chat
+            chat = event.chat  # keshdan, 0 API
             chat_id = str(abs(event.chat_id or 0))
             chat_name = getattr(chat, 'title', chat_id) if chat else chat_id
             src_str = str(event.chat_id or chat_id)
@@ -3112,7 +3100,7 @@ def setup_realtime_handlers(userbot, userbot2=None, bot=None, admin_id=None):
         async def _ub2_handler(event):
             try:
                 msg = event.message
-                chat = event.chat
+                chat = event.chat  # keshdan, 0 API
                 chat_id = str(abs(event.chat_id or 0))
                 chat_name = getattr(chat, 'title', chat_id) if chat else chat_id
                 src_str = str(event.chat_id or chat_id)
@@ -3330,17 +3318,22 @@ async def _notify_channel_joined(ub, bot, admin_id, idx, entity, ch_id_str, ch_i
             )
         await db.commit()
 
-    await bot.send_message(
-        admin_id,
-        f"🔓 **MAXFIY KANALGA KIRISH OCHILDI!**\n\n"
-        f"📢 Kanal: `{ch_name}`\n"
-        f"🔗 Link: {ch_id_str}\n"
-        f"🆔 ID: `{numeric_id_str}`\n"
-        f"🏢 Manba: `{source_group}`\n"
-        f"🤖 Userbot{idx + 1} orqali\n\n"
-        f"🎵 Hozir skanerlanyapti: `{_CURRENT_SCAN_CHANNEL or '—'}`\n"
-        f"⏳ U tugagach `{ch_name}` skanerlanadi..."
-    )
+    print(f"[WATCHER] 📨 Bot xabar yubormoqda → admin_id={admin_id}, kanal={ch_name}")
+    try:
+        await bot.send_message(
+            admin_id,
+            f"🔓 **MAXFIY KANALGA KIRISH OCHILDI!**\n\n"
+            f"📢 Kanal: `{ch_name}`\n"
+            f"🔗 Link: {ch_id_str}\n"
+            f"🆔 ID: `{numeric_id_str}`\n"
+            f"🏢 Manba: `{source_group}`\n"
+            f"🤖 Userbot{idx + 1} orqali\n\n"
+            f"🎵 Hozir skanerlanyapti: `{_CURRENT_SCAN_CHANNEL or '—'}`\n"
+            f"⏳ U tugagach `{ch_name}` skanerlanadi..."
+        )
+        print(f"[WATCHER] ✅ Bot xabari yuborildi → {admin_id}")
+    except Exception as _e:
+        print(f"[WATCHER] ❌ Bot xabari YUBORILMADI → admin_id={admin_id} | Xato: {_e}")
     # Parallel task emas — aylanma skan navbati orqali ketma-ket ishlanadi
     if _JOINED_CHANNEL_QUEUE is not None:
         _JOINED_CHANNEL_QUEUE.put_nowait({
@@ -3603,7 +3596,6 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
     # Barcha tayinlanmagan kanallarni taqsimlash
     await _distribute_channels(n)
 
-    print(f"[KNOCKER] Ishga tushdi — {n} ta userbot, {KNOCK_INTERVAL//60} daqiqada bir tekshiradi")
     await asyncio.sleep(300)
 
     while True:
@@ -3613,7 +3605,6 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
 
         try:
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-            print(f"[KNOCKER] {now_str} — tekshiruv boshlandi")
 
             # Yangi qo'shilgan kanallarni taqsimlash
             await _distribute_channels(n)
@@ -3630,7 +3621,6 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                         row = await cur.fetchone()
 
                 if not row:
-                    print(f"[KNOCKER] UB{idx+1}: pending kanal yo'q")
                     continue
 
                 ch_id_raw, creator_id, source_group, last_req = row
@@ -3966,111 +3956,67 @@ async def search_keywords_local(keyword_str: str, days: int = None):
         date_param = [cutoff]
 
     seen_ids: set = set()
-    # (sender_id, sender_name, sender_username, text, msg_date, source)
     combined_rows: list = []
 
-    # Kanal ID bo'yicha qidiruv: raqamli + ixtiyoriy "-" bilan boshlanadi
-    def _is_channel_id(kw: str) -> bool:
-        return kw.lstrip('-').isdigit() and len(kw.lstrip('-')) > 5
-
-    channel_id_keywords = [kw for kw in keywords if _is_channel_id(kw)]
-    text_keywords       = [kw for kw in keywords if not _is_channel_id(kw)]
-
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-
-        # 0. Kanal ID bo'yicha — o'sha kanalda xabar yozgan unikal foydalanuvchilar
-        for ch_kw in channel_id_keywords:
-            variants = {ch_kw, ch_kw.lstrip('-'), f"-{ch_kw.lstrip('-')}",
-                        f"-100{ch_kw.lstrip('-0')}"}
-            for v in variants:
-                src_query = f"""
-                    SELECT sender_id, sender_name, sender_username, source
-                    FROM messages_cache
-                    WHERE source = ?
-                      AND sender_id > 0
-                    {like_date_clause}
-                    GROUP BY sender_id
-                    LIMIT 500
-                """
-                async with db.execute(src_query, [v] + date_param) as cur:
-                    for (sid, sname, sun, src) in await cur.fetchall():
-                        if sid and sid not in seen_ids:
-                            seen_ids.add(sid)
-                            # (sender_id, sender_name, sender_username, text, msg_date, source)
-                            combined_rows.append((sid, sname, sun, "", "", src))
-
-        if text_keywords:
-            # 1. FTS5 — tez indeks qidiradi (faqat trigger orqali indekslangan satrlar)
-            try:
-                fts_terms = " OR ".join(f'"{kw}"' for kw in text_keywords)
-                fts_query = f"""
-                    SELECT m.id, m.sender_id, m.sender_name, m.sender_username,
-                           m.text, m.msg_date, m.source
-                    FROM messages_fts f
-                    JOIN messages_cache m ON m.id = f.rowid
-                    WHERE messages_fts MATCH ?
-                    {fts_date_clause}
-                    ORDER BY m.msg_date DESC
-                    LIMIT 500
-                """
-                async with db.execute(fts_query, [fts_terms] + date_param) as cur:
-                    for row in await cur.fetchall():
-                        row_id = row[0]
-                        if row_id not in seen_ids:
-                            seen_ids.add(row_id)
-                            combined_rows.append(row[1:])
-            except Exception:
-                pass
-
-            # 2. LIKE — messages_cache dagi BARCHA satrlarni qidiradi
-            like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in text_keywords])
-            like_params  = [f"%{kw}%" for kw in text_keywords]
-            like_query = f"""
-                SELECT id, sender_id, sender_name, sender_username,
-                       text, msg_date, source
-                FROM messages_cache
-                WHERE ({like_clauses})
-                {like_date_clause}
-                ORDER BY msg_date DESC
+        # 1. FTS5 — tez indeks qidiradi
+        try:
+            fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
+            fts_query = f"""
+                SELECT m.id, m.sender_id, m.sender_name, m.sender_username,
+                       m.text, m.msg_date, m.source
+                FROM messages_fts f
+                JOIN messages_cache m ON m.id = f.rowid
+                WHERE messages_fts MATCH ?
+                {fts_date_clause}
+                ORDER BY m.msg_date DESC
                 LIMIT 500
             """
-            async with db.execute(like_query, like_params + date_param) as cur:
+            async with db.execute(fts_query, [fts_terms] + date_param) as cur:
                 for row in await cur.fetchall():
-                    row_id = row[0]
-                    if row_id not in seen_ids:
-                        seen_ids.add(row_id)
+                    if row[0] not in seen_ids:
+                        seen_ids.add(row[0])
                         combined_rows.append(row[1:])
+        except Exception:
+            pass
+
+        # 2. LIKE — messages_cache dagi BARCHA satrlarni qidiradi
+        #    (FTS5 indeksida bo'lmagan eski ma'lumotlarni ham topadi)
+        like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
+        like_params  = [f"%{kw}%" for kw in keywords]
+        like_query = f"""
+            SELECT id, sender_id, sender_name, sender_username,
+                   text, msg_date, source
+            FROM messages_cache
+            WHERE ({like_clauses})
+            {like_date_clause}
+            ORDER BY msg_date DESC
+            LIMIT 500
+        """
+        async with db.execute(like_query, like_params + date_param) as cur:
+            for row in await cur.fetchall():
+                if row[0] not in seen_ids:
+                    seen_ids.add(row[0])
+                    combined_rows.append(row[1:])
 
     results = []
     for (s_id, s_name, s_un, text, msg_date, source) in combined_rows:
+        search_text = (text or "").lower()
+        matched = [kw for kw in keywords if kw in search_text]
+        if not matched:
+            continue
         display = text or ""
         if len(display) > 300:
             display = display[:297] + "..."
-        if channel_id_keywords and not text_keywords:
-            # Kanal ID qidiruvi: foydalanuvchi ma'lumotlari
-            results.append({
-                'name':     s_name or "",
-                'username': s_un   or "",
-                'user_id':  s_id   or 0,
-                'date':     msg_date or "",
-                'text':     display,
-                'source':   source or "",
-                'matched':  source or "",
-            })
-        else:
-            search_text = (text or "").lower()
-            matched_kws = [kw for kw in text_keywords if kw in search_text]
-            if not matched_kws:
-                continue
-            results.append({
-                'name':     s_name or "",
-                'username': s_un   or "",
-                'user_id':  s_id   or 0,
-                'date':     msg_date or "",
-                'text':     display,
-                'source':   source or "",
-                'matched':  ", ".join(matched_kws),
-            })
+        results.append({
+            'name':     s_name or "",
+            'username': s_un   or "",
+            'user_id':  s_id   or 0,
+            'date':     msg_date or "",
+            'text':     display,
+            'source':   source or "",
+            'matched':  ", ".join(matched)
+        })
 
     return results
 
