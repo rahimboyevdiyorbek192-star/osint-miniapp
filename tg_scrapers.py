@@ -2569,22 +2569,25 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         _PROCESSING_AUDIO.add(_pkey)
         tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
 
-        # 1. Yuklab olish (I/O — _DL_SEM bilan)
+        # 1. Yuklab olish (I/O — _DL_SEM bilan, max 90s timeout)
         async with _DL_SEM:
             ok = False
             for attempt in range(3):
                 try:
-                    await m.download_media(file=tmp_path)
+                    await asyncio.wait_for(
+                        m.download_media(file=tmp_path),
+                        timeout=90
+                    )
                     if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
                         ok = True
                         break
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
-                except Exception:
+                except (Exception, asyncio.TimeoutError):
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                     if attempt < 2:
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
             if not ok:
                 _PROCESSING_AUDIO.discard(_pkey)
                 return
@@ -2694,7 +2697,13 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             pass
 
     if _ch_tasks:
-        await asyncio.gather(*_ch_tasks, return_exceptions=True)
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*_ch_tasks, return_exceptions=True),
+                timeout=1800  # max 30 daqiqa — bitta kanal uchun
+            )
+        except asyncio.TimeoutError:
+            print(f"[MUSIQA] {channel_name}: audio tasklar 30 daqiqada tugamadi, o'tkazib yuborildi")
 
     # Discussion guruhi topilgan bo'lsa — fon rejimda foydalanuvchilarni skanerlash
     if _discussion_id:
