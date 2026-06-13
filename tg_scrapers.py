@@ -2569,25 +2569,22 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         _PROCESSING_AUDIO.add(_pkey)
         tmp_path = os.path.join(BASE_DIR_LOCAL, f"tmp_ch_{channel_id}_{m.id}.ogg")
 
-        # 1. Yuklab olish (I/O — _DL_SEM bilan, max 90s timeout)
+        # 1. Yuklab olish (I/O — _DL_SEM bilan)
         async with _DL_SEM:
             ok = False
             for attempt in range(3):
                 try:
-                    await asyncio.wait_for(
-                        m.download_media(file=tmp_path),
-                        timeout=90
-                    )
+                    await m.download_media(file=tmp_path)
                     if os.path.exists(tmp_path) and os.path.getsize(tmp_path) > 0:
                         ok = True
                         break
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
-                except (Exception, asyncio.TimeoutError):
+                except Exception:
                     if os.path.exists(tmp_path):
                         os.remove(tmp_path)
                     if attempt < 2:
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(1)
             if not ok:
                 _PROCESSING_AUDIO.discard(_pkey)
                 return
