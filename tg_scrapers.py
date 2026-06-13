@@ -2377,20 +2377,8 @@ async def _scan_discussion_users_bg(userbot, discussion_id: int, source_link: st
                         except Exception:
                             shaxsiy = f"https://t.me/c/{ch_id}/1"
                             pc_un   = None
-                        # Faqat MAXFIY kanallarni qo'shish (username bo'lsa — ochiq, kirish mumkin)
-                        if not pc_un:
-                            try:
-                                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                                    await _db.execute(
-                                        "INSERT OR IGNORE INTO hidden_channel_knocker "
-                                        "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
-                                        "VALUES (?, ?, ?, ?, ?)",
-                                        (shaxsiy, uid, source_link, now_str, userbot_idx)
-                                    )
-                                    await _db.commit()
-                            except Exception:
-                                pass
+                        # Knocker ga QO'SHILMAYDI — musiqa skaneri urinib ko'radi,
+                        # kira olmasa o'sha zahoti knocker ga qo'shiladi
                 except FloodWaitError as e:
                     await asyncio.sleep(min(e.seconds + 2, 120))
                 except Exception:
@@ -2622,6 +2610,29 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
     _cache_src   = str(source)
     _msg_counter = 0
     _discussion_id = None  # Kanal discussion guruhi ID si
+
+    try:
+      _iter_check = userbot.iter_messages(entity, limit=1)
+      await _iter_check.__anext__()
+      await _iter_check.aclose()
+    except StopAsyncIteration:
+      pass  # Bo'sh kanal — normal
+    except Exception as _acc_err:
+      _acc_str = str(_acc_err).lower()
+      if any(x in _acc_str for x in ('private', 'forbidden', 'banned', 'not found')):
+        try:
+          _now = datetime.now().strftime("%Y-%m-%d %H:%M")
+          async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _kdb:
+            await _kdb.execute(
+              "INSERT OR IGNORE INTO hidden_channel_knocker "
+              "(channel_id, creator_id, source_group, last_request_time) "
+              "VALUES (?, 0, 'MusicScanner', ?)",
+              (src_str, _now)
+            )
+            await _kdb.commit()
+        except Exception:
+          pass
+      return
 
     async for msg in userbot.iter_messages(entity, **iter_kwargs):
         _msg_counter += 1
