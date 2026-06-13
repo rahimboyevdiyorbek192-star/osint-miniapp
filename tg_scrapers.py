@@ -739,7 +739,8 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                                 )
 
                     # Matnli xabarlarni keshga yig'ish
-                    if msg.text and len(msg.text) > 2:
+                    _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+                    if len(_mc_text) > 2:
                         sender = msg.sender
                         s_id = getattr(sender, 'id', msg.sender_id) if sender else msg.sender_id
                         s_name = ""
@@ -747,8 +748,11 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
                         if sender and hasattr(sender, 'first_name'):
                             s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                             s_un   = getattr(sender, 'username', '') or ""
+                        elif sender and hasattr(sender, 'title'):
+                            s_name = sender.title or ""
+                            s_un   = getattr(sender, 'username', '') or ""
                         msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                        _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
+                        _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, _mc_text[:2000], msg_dt))
 
                     # Har 1000 xabarda batch-insert
                     if len(_cache_batch) >= 1000:
@@ -1418,15 +1422,19 @@ async def _read_msg_chunk(ub, entity, add_offset: int, limit: int,
                 else:
                     unique_ids.add(msg.sender_id)
 
-            if msg.text and len(msg.text) > 2:
+            _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+            if len(_mc_text) > 2:
                 sender = msg.sender
                 s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
                 s_name, s_un = "", ""
                 if sender and hasattr(sender, 'first_name'):
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un = getattr(sender, 'username', '') or ""
+                elif sender and hasattr(sender, 'title'):
+                    s_name = sender.title or ""
+                    s_un = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                local_cache.append((msg.id, src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
+                local_cache.append((msg.id, src_str, s_id, s_name, s_un, _mc_text[:2000], msg_dt))
                 if len(local_cache) >= 300:
                     try:
                         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -1525,15 +1533,19 @@ async def scan_messages(userbot, target, output_path, status_msg, days=None,
                             unique_users[msg.sender_id] = sender
                     else:
                         unique_ids.add(msg.sender_id)
-                if msg.text and len(msg.text) > 2:
+                _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+                if len(_mc_text) > 2:
                     sender = msg.sender
                     s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
                     s_name, s_un = "", ""
                     if sender and hasattr(sender, 'first_name'):
                         s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                         s_un = getattr(sender, 'username', '') or ""
+                    elif sender and hasattr(sender, 'title'):
+                        s_name = sender.title or ""
+                        s_un = getattr(sender, 'username', '') or ""
                     msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                    _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt))
+                    _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, _mc_text[:2000], msg_dt))
                     if len(_cache_batch) >= 300:
                         try:
                             async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -1868,17 +1880,21 @@ async def scan_channel_comments(userbot, target, output_path, status_msg,
                     unique_users[msg.sender_id] = sender
 
             # Matnli xabarlarni keshga yig'ish
-            if msg.text and len(msg.text) > 2:
+            _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+            if len(_mc_text) > 2:
                 sender = msg.sender
                 s_name = ""
                 s_un   = ""
                 if sender and hasattr(sender, 'first_name'):
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un   = getattr(sender, 'username', '') or ""
+                elif sender and hasattr(sender, 'title'):
+                    s_name = sender.title or ""
+                    s_un   = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                 _cache_batch.append((
                     msg.id, _src_str, msg.sender_id,
-                    s_name, s_un, msg.text[:2000], msg_dt
+                    s_name, s_un, _mc_text[:2000], msg_dt
                 ))
 
             # Har 300 xabarda batch-insert
@@ -2135,16 +2151,20 @@ async def search_keywords(userbot, target, keywords_str, status_msg, days=None):
                 if msg_dt < offset_date:
                     break
 
-            # Keshga saqlash (matnli xabarlar)
-            if has_text and len(msg.text) > 2:
+            # Keshga saqlash (matnli xabarlar + caption)
+            _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+            if len(_mc_text) > 2:
                 sender = msg.sender
                 s_id = getattr(sender, 'id', msg.sender_id or 0) if sender else (msg.sender_id or 0)
                 s_name, s_un = "", ""
                 if sender and hasattr(sender, 'first_name'):
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un = getattr(sender, 'username', '') or ""
+                elif sender and hasattr(sender, 'title'):
+                    s_name = sender.title or ""
+                    s_un = getattr(sender, 'username', '') or ""
                 msg_dt_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, msg.text[:2000], msg_dt_str))
+                _cache_batch.append((msg.id, _src_str, s_id, s_name, s_un, _mc_text[:2000], msg_dt_str))
                 if len(_cache_batch) >= 300:
                     try:
                         async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -3195,15 +3215,19 @@ async def _scan_user_music(userbot, uid, name, channel_link, full_info=None):
             async for msg in userbot.iter_messages(entity, limit=None):
                 if is_music_file(msg):
                     audio_msgs.append(msg)
-                if msg.text and len(msg.text) > 2:
+                _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+                if len(_mc_text) > 2:
                     _s = msg.sender
                     _sid = getattr(_s, 'id', msg.sender_id or 0) if _s else (msg.sender_id or 0)
                     _sname, _sun = "", ""
                     if _s and hasattr(_s, 'first_name'):
                         _sname = (((_s.first_name or "") + " " + (_s.last_name or "")).strip())
                         _sun   = getattr(_s, 'username', '') or ""
+                    elif _s and hasattr(_s, 'title'):
+                        _sname = _s.title or ""
+                        _sun   = getattr(_s, 'username', '') or ""
                     _dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                    _usr_cache.append((msg.id, _usr_src, _sid, _sname, _sun, msg.text[:2000], _dt))
+                    _usr_cache.append((msg.id, _usr_src, _sid, _sname, _sun, _mc_text[:2000], _dt))
                     if len(_usr_cache) >= 300:
                         try:
                             async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
@@ -3693,16 +3717,20 @@ async def _scan_channel_music_after_join(userbot, bot, admin_id, entity, ch_link
 
         # Bir o'tishda: kesh + musiqa filtri
         async for msg in userbot.iter_messages(entity, limit=None):
-            # Kesh uchun — faqat matnli xabarlar
-            if msg.text and len(msg.text) > 2:
+            # Kesh uchun — matnli xabarlar + caption
+            _mc_text = msg.text or getattr(msg, 'caption', None) or ""
+            if len(_mc_text) > 2:
                 s_id  = str(msg.sender_id or "")
                 s_name, s_un = "", ""
                 sender = msg.sender  # cached — API call yo'q
                 if sender and hasattr(sender, 'first_name'):
                     s_name = ((sender.first_name or "") + " " + (sender.last_name or "")).strip()
                     s_un   = getattr(sender, 'username', '') or ""
+                elif sender and hasattr(sender, 'title'):
+                    s_name = sender.title or ""
+                    s_un   = getattr(sender, 'username', '') or ""
                 msg_dt = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
-                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, msg.text[:2000], msg_dt))
+                cache_batch.append((msg.id, ch_link, s_id, s_name, s_un, _mc_text[:2000], msg_dt))
                 cache_count += 1
 
                 if len(cache_batch) >= 300:
@@ -3830,10 +3858,12 @@ async def sync_source_messages(userbot, source: str, limit_days: int = 90):
             if not msg or not msg.id:
                 continue
 
-            # Faqat matnli / audio xabarlar
+            # Faqat matnli / audio xabarlar (caption ham)
             text = ""
             if msg.text:
                 text = msg.text
+            elif getattr(msg, 'caption', None):
+                text = msg.caption
             elif msg.audio or msg.voice:
                 parts = []
                 audio = msg.audio or msg.voice
