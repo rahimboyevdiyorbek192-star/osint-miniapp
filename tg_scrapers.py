@@ -47,6 +47,13 @@ _PROCESSING_AUDIO: set = set()   # (channel_id, msg_id) — ikki userbot bir mus
 _JOINED_CHANNEL_QUEUE: asyncio.Queue = None  # Ochilgan maxfiy kanallar navbati
 _CURRENT_SCAN_CHANNEL: str = ""  # Hozir skanerlanyotgan kanal nomi
 
+# Barcha userbotlar uchun umumiy semaphoralar (modul darajasida)
+# Shunday qilib 2 userbot birgalikda ham limitdan oshmaydi
+_CPU_COUNT  = os.cpu_count() or 2
+_FP_WORKERS = max(2, _CPU_COUNT // 2)   # fizik yadro soni (HT ni hisobga olmaydi)
+_DL_SEM     = asyncio.Semaphore(4)      # Jami 4 ta parallel yuklab olish (I/O)
+_FP_SEM     = asyncio.Semaphore(_FP_WORKERS)  # Jami N ta parallel fingerprint (CPU)
+
 def _record_flood(seconds: float):
     """Flood kelganda penalty oshirish — keyingi so'rovlar sekinlashadi."""
     global _FLOOD_PENALTY
@@ -2544,11 +2551,6 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
         iter_kwargs["min_id"] = last_msg_id
 
     BASE_DIR_LOCAL = os.path.dirname(os.path.abspath(__file__))
-    import os as _os
-    _cpu_count  = _os.cpu_count() or 2
-    _fp_workers = max(2, _cpu_count // 2)        # Fizik yadro soni (HT ni hisobga olmaydi)
-    _DL_SEM     = asyncio.Semaphore(4)           # Parallel yuklab olish (I/O)
-    _FP_SEM     = asyncio.Semaphore(_fp_workers) # Parallel fingerprint (fizik yadro)
     _ch_tasks   = set()
 
     async def _pipeline(m):
