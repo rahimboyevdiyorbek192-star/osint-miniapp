@@ -3601,6 +3601,7 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
     # Barcha tayinlanmagan kanallarni taqsimlash
     await _distribute_channels(n)
 
+    print(f"[KNOCKER] Ishga tushdi — {n} ta userbot, {KNOCK_INTERVAL//60} daqiqada bir tekshiradi")
     await asyncio.sleep(300)
 
     while True:
@@ -3610,6 +3611,7 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
 
         try:
             now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+            print(f"[KNOCKER] {now_str} — tekshiruv boshlandi")
 
             # Yangi qo'shilgan kanallarni taqsimlash
             await _distribute_channels(n)
@@ -3626,6 +3628,7 @@ async def smart_channel_knocker(userbot, bot, admin_id, extra_userbots=None):
                         row = await cur.fetchone()
 
                 if not row:
+                    print(f"[KNOCKER] UB{idx+1}: pending kanal yo'q")
                     continue
 
                 ch_id_raw, creator_id, source_group, last_req = row
