@@ -51,7 +51,7 @@ _CURRENT_SCAN_CHANNEL: str = ""  # Hozir skanerlanyotgan kanal nomi
 # Shunday qilib 2 userbot birgalikda ham limitdan oshmaydi
 _CPU_COUNT  = os.cpu_count() or 2
 _FP_WORKERS = max(2, _CPU_COUNT // 2)   # fizik yadro soni (HT ni hisobga olmaydi)
-_DL_SEM     = asyncio.Semaphore(3)      # Jami 3 ta parallel yuklab olish (I/O)
+_DL_SEM     = asyncio.Semaphore(4)      # Jami 4 ta parallel yuklab olish (I/O)
 _FP_SEM     = asyncio.Semaphore(_FP_WORKERS)  # Jami N ta parallel fingerprint (CPU)
 
 def _record_flood(seconds: float):
