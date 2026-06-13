@@ -2376,19 +2376,21 @@ async def _scan_discussion_users_bg(userbot, discussion_id: int, source_link: st
                                        else f"https://t.me/c/{ch_id}/1")
                         except Exception:
                             shaxsiy = f"https://t.me/c/{ch_id}/1"
-                        # Shaxsiy kanalni hidden_channel_knocker navbatiga qo'shish
-                        try:
-                            now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
-                                await _db.execute(
-                                    "INSERT OR IGNORE INTO hidden_channel_knocker "
-                                    "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
-                                    "VALUES (?, ?, ?, ?, ?)",
-                                    (shaxsiy, uid, source_link, now_str, userbot_idx)
-                                )
-                                await _db.commit()
-                        except Exception:
-                            pass
+                            pc_un   = None
+                        # Faqat MAXFIY kanallarni qo'shish (username bo'lsa — ochiq, kirish mumkin)
+                        if not pc_un:
+                            try:
+                                now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+                                async with aiosqlite.connect(db_mod.DB_NAME, timeout=10) as _db:
+                                    await _db.execute(
+                                        "INSERT OR IGNORE INTO hidden_channel_knocker "
+                                        "(channel_id, creator_id, source_group, last_request_time, userbot_idx) "
+                                        "VALUES (?, ?, ?, ?, ?)",
+                                        (shaxsiy, uid, source_link, now_str, userbot_idx)
+                                    )
+                                    await _db.commit()
+                            except Exception:
+                                pass
                 except FloodWaitError as e:
                     await asyncio.sleep(min(e.seconds + 2, 120))
                 except Exception:
