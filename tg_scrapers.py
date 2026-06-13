@@ -2697,13 +2697,7 @@ async def _music_process_one_source(userbot, source, userbot_idx=0):
             pass
 
     if _ch_tasks:
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*_ch_tasks, return_exceptions=True),
-                timeout=1800  # max 30 daqiqa — bitta kanal uchun
-            )
-        except asyncio.TimeoutError:
-            print(f"[MUSIQA] {channel_name}: audio tasklar 30 daqiqada tugamadi, o'tkazib yuborildi")
+        await asyncio.gather(*_ch_tasks, return_exceptions=True)
 
     # Discussion guruhi topilgan bo'lsa — fon rejimda foydalanuvchilarni skanerlash
     if _discussion_id:
