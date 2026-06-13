@@ -2845,31 +2845,7 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
             print(f"[MUSIQA-{label}] Kanal xatosi ({source}): {e}")
             await asyncio.sleep(3)
 
-        # Ochilgan maxfiy kanallar navbatini tekshir — keyingi kanalga o'tishdan oldin
-        while _JOINED_CHANNEL_QUEUE is not None and not _JOINED_CHANNEL_QUEUE.empty():
-            try:
-                _jc = _JOINED_CHANNEL_QUEUE.get_nowait()
-                _jc_link = _jc['link']
-                _jc_name = _jc['name']
-                _jc_bot  = _jc['bot']
-                _jc_adm  = _jc['admin_id']
-                _CURRENT_SCAN_CHANNEL = _jc_link
-                print(f"[MUSIQA-{label}] Ochilgan maxfiy kanal skanerlanmoqda: {_jc_name}")
-                await _music_process_one_source(userbot, _jc_link, userbot_idx)
-                print(f"[MUSIQA-{label}] Maxfiy kanal skaner tugadi: {_jc_name}")
-                try:
-                    await _jc_bot.send_message(
-                        _jc_adm,
-                        f"✅ **Maxfiy kanal skanerlandi!**\n\n"
-                        f"📢 Kanal: `{_jc_name}`\n"
-                        f"🎵 Barcha musiqalar fingerprint qilindi"
-                    )
-                except Exception:
-                    pass
-            except asyncio.QueueEmpty:
-                break
-            except Exception as _je:
-                print(f"[MUSIQA-{label}] Maxfiy kanal xatosi: {_je}")
+        # Navbat endi alohida _secret_channel_queue_worker da ishlaydi
 
     # Tsikl tugadi — cursori tozalash (keyingi tsikl yangidan boshlansin)
     try:
@@ -2880,6 +2856,52 @@ async def _music_process_list(userbot, sources, userbot_idx=0):
         pass
 
 
+async def _secret_channel_queue_worker(all_bots):
+    """
+    Mustaqil navbat ishchi — maxfiy kanal ochildi signalini DARHOL qayta ishlaydi.
+    music_channel_tracker ning joriy skaneri tugashini kutmaydi.
+    UB1 va UB2 o'rtasida navbatma-navbat taqsimlaydi.
+    """
+    global _CURRENT_SCAN_CHANNEL
+    _ub_idx = 0
+    while True:
+        try:
+            if _JOINED_CHANNEL_QUEUE is None:
+                await asyncio.sleep(5)
+                continue
+            jc = await _JOINED_CHANNEL_QUEUE.get()
+        except Exception:
+            await asyncio.sleep(5)
+            continue
+
+        jc_link = jc.get('link', '')
+        jc_name = jc.get('name', jc_link)
+        jc_bot  = jc.get('bot')
+        jc_adm  = jc.get('admin_id')
+
+        ub = all_bots[_ub_idx % len(all_bots)]
+        ub_idx_use = _ub_idx % len(all_bots)
+        _ub_idx += 1
+
+        print(f"[SECRET-WORKER] UB{ub_idx_use+1} → maxfiy kanal skanerlanmoqda: {jc_name}")
+        _CURRENT_SCAN_CHANNEL = jc_link
+        try:
+            await _music_process_one_source(ub, jc_link, ub_idx_use)
+            print(f"[SECRET-WORKER] Maxfiy kanal skaner tugadi: {jc_name}")
+            if jc_bot and jc_adm:
+                try:
+                    await jc_bot.send_message(
+                        jc_adm,
+                        f"✅ **Maxfiy kanal skanerlandi!**\n\n"
+                        f"📢 Kanal: `{jc_name}`\n"
+                        f"🎵 Barcha musiqalar fingerprint qilindi"
+                    )
+                except Exception:
+                    pass
+        except Exception as _e:
+            print(f"[SECRET-WORKER] Xato ({jc_name}): {_e}")
+
+
 async def music_channel_tracker(userbot, userbot2=None):
     """
     Monitoring kanallaridagi barcha audio xabarlarni yuklab,
@@ -2888,6 +2910,10 @@ async def music_channel_tracker(userbot, userbot2=None):
     userbot2 berilsa: maxfiy kanallar→userbot1, ochiq kanallar→ikkala userbot parallel.
     """
     await music_mod.init_music_db()
+
+    # Maxfiy kanallar uchun mustaqil worker — music scan ni kutmaydi
+    _all_bots = [userbot] + ([userbot2] if userbot2 else [])
+    asyncio.create_task(_secret_channel_queue_worker(_all_bots))
 
     while True:
         try:
