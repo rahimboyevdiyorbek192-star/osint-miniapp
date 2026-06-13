@@ -650,7 +650,7 @@ async def deep_scan_group(userbot, target_group, output_path, status_msg,
         while not _iter_done:
             try:
                 async for msg in userbot.iter_messages(
-                    entity, limit=10000,
+                    entity, limit=None,
                     offset_id=_iter_offset_id, reverse=False
                 ):
                     if not msg.sender_id or msg.sender_id <= 0:
