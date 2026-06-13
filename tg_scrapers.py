@@ -3964,58 +3964,91 @@ async def search_keywords_local(keyword_str: str, days: int = None):
     # (sender_id, sender_name, sender_username, text, msg_date, source)
     combined_rows: list = []
 
+    # Kanal ID bo'yicha qidiruv: raqamli + ixtiyoriy "-" bilan boshlanadi
+    def _is_channel_id(kw: str) -> bool:
+        return kw.lstrip('-').isdigit() and len(kw.lstrip('-')) > 5
+
+    channel_id_keywords = [kw for kw in keywords if _is_channel_id(kw)]
+    text_keywords       = [kw for kw in keywords if not _is_channel_id(kw)]
+
     async with aiosqlite.connect(db_mod.DB_NAME, timeout=30) as db:
-        # 1. FTS5 — tez indeks qidiradi (faqat trigger orqali indekslangan satrlar)
-        try:
-            fts_terms = " OR ".join(f'"{kw}"' for kw in keywords)
-            fts_query = f"""
-                SELECT m.id, m.sender_id, m.sender_name, m.sender_username,
-                       m.text, m.msg_date, m.source
-                FROM messages_fts f
-                JOIN messages_cache m ON m.id = f.rowid
-                WHERE messages_fts MATCH ?
-                {fts_date_clause}
-                ORDER BY m.msg_date DESC
+
+        # 0. Kanal ID bo'yicha source qidiruv (raqamli kalit so'z)
+        for ch_kw in channel_id_keywords:
+            # -1002254316592, 1002254316592 — har ikkisini tekshir
+            variants = {ch_kw, ch_kw.lstrip('-'), f"-{ch_kw.lstrip('-')}",
+                        f"-100{ch_kw.lstrip('-0')}"}
+            for v in variants:
+                src_query = f"""
+                    SELECT id, sender_id, sender_name, sender_username,
+                           text, msg_date, source
+                    FROM messages_cache
+                    WHERE source = ?
+                    {like_date_clause}
+                    ORDER BY msg_date DESC
+                    LIMIT 500
+                """
+                async with db.execute(src_query, [v] + date_param) as cur:
+                    for row in await cur.fetchall():
+                        if row[0] not in seen_ids:
+                            seen_ids.add(row[0])
+                            combined_rows.append(row[1:])
+
+        if text_keywords:
+            # 1. FTS5 — tez indeks qidiradi (faqat trigger orqali indekslangan satrlar)
+            try:
+                fts_terms = " OR ".join(f'"{kw}"' for kw in text_keywords)
+                fts_query = f"""
+                    SELECT m.id, m.sender_id, m.sender_name, m.sender_username,
+                           m.text, m.msg_date, m.source
+                    FROM messages_fts f
+                    JOIN messages_cache m ON m.id = f.rowid
+                    WHERE messages_fts MATCH ?
+                    {fts_date_clause}
+                    ORDER BY m.msg_date DESC
+                    LIMIT 500
+                """
+                async with db.execute(fts_query, [fts_terms] + date_param) as cur:
+                    for row in await cur.fetchall():
+                        row_id = row[0]
+                        if row_id not in seen_ids:
+                            seen_ids.add(row_id)
+                            combined_rows.append(row[1:])
+            except Exception:
+                pass
+
+            # 2. LIKE — messages_cache dagi BARCHA satrlarni qidiradi
+            like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in text_keywords])
+            like_params  = [f"%{kw}%" for kw in text_keywords]
+            like_query = f"""
+                SELECT id, sender_id, sender_name, sender_username,
+                       text, msg_date, source
+                FROM messages_cache
+                WHERE ({like_clauses})
+                {like_date_clause}
+                ORDER BY msg_date DESC
                 LIMIT 500
             """
-            async with db.execute(fts_query, [fts_terms] + date_param) as cur:
+            async with db.execute(like_query, like_params + date_param) as cur:
                 for row in await cur.fetchall():
                     row_id = row[0]
                     if row_id not in seen_ids:
                         seen_ids.add(row_id)
-                        combined_rows.append(row[1:])  # id siz
-        except Exception:
-            pass
-
-        # 2. LIKE — messages_cache dagi BARCHA satrlarni qidiradi
-        #    (FTS5 indeksida bo'lmagan eski ma'lumotlarni ham topadi)
-        like_clauses = " OR ".join(["LOWER(text) LIKE ?" for _ in keywords])
-        like_params  = [f"%{kw}%" for kw in keywords]
-        like_query = f"""
-            SELECT id, sender_id, sender_name, sender_username,
-                   text, msg_date, source
-            FROM messages_cache
-            WHERE ({like_clauses})
-            {like_date_clause}
-            ORDER BY msg_date DESC
-            LIMIT 500
-        """
-        async with db.execute(like_query, like_params + date_param) as cur:
-            for row in await cur.fetchall():
-                row_id = row[0]
-                if row_id not in seen_ids:
-                    seen_ids.add(row_id)
-                    combined_rows.append(row[1:])  # id siz
+                        combined_rows.append(row[1:])
 
     results = []
     for (s_id, s_name, s_un, text, msg_date, source) in combined_rows:
-        search_text = (text or "").lower()
-        matched = [kw for kw in keywords if kw in search_text]
-        if not matched:
-            continue
         display = text or ""
         if len(display) > 300:
             display = display[:297] + "..."
+        # Kanal ID qidiruvi uchun matched = source, aks holda matn tekshiruvi
+        if channel_id_keywords:
+            matched_kws = channel_id_keywords[:]
+        else:
+            search_text = (text or "").lower()
+            matched_kws = [kw for kw in keywords if kw in search_text]
+            if not matched_kws:
+                continue
         results.append({
             'name':     s_name or "",
             'username': s_un   or "",
@@ -4023,7 +4056,7 @@ async def search_keywords_local(keyword_str: str, days: int = None):
             'date':     msg_date or "",
             'text':     display,
             'source':   source or "",
-            'matched':  ", ".join(matched)
+            'matched':  ", ".join(matched_kws)
         })
 
     return results
